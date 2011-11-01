@@ -1,0 +1,4 @@
+# Sample service description file
+[D-BUS Service]
+Name=com.nokia.maefat
+Exec=/usr/bin/maefat
