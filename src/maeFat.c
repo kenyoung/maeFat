@@ -4210,7 +4210,7 @@ void aboutButtonClicked(GtkButton *button, gpointer userData)
   dprintf("in aboutButtonClicked()\n");
   if (firstCall) {
     aboutBuffer = gtk_text_buffer_new(NULL);
-    gtk_text_buffer_set_text(aboutBuffer, "maeFat Version 1.13\nCopyright (C) 2011, Ken Young\n\nThis program helps you keep track of your weight.\nThis is free, open source software, released under GPL version 2.\n\nPlease send comments, questions and feature requests to\norrery.moko@gmail.com", -1);
+    gtk_text_buffer_set_text(aboutBuffer, "maeFat Version 2.00\nCopyright (C) 2011, Ken Young\n\nThis program helps you keep track of your weight.\nThis is free, open source software, released under GPL version 2.\n\nPlease send comments, questions and feature requests to\norrery.moko@gmail.com", -1);
     aboutTextWidget = hildon_text_view_new(); 
     ((GtkTextView *)aboutTextWidget)->editable =
       ((GtkTextView *)aboutTextWidget)->cursor_visible = FALSE;
