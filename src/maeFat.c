@@ -1,5 +1,5 @@
 /*
-  maeFat Rev 1.13
+  maeFat Rev 2.00
   First Version Feb. 5, 2011
 
   Copyright (C) (2011) Ken Young orrery.moko@gmail.com
@@ -79,12 +79,16 @@
 #define DOUBLE_TOKEN  1
 #define FLOAT_TOKEN   2
 #define STRING_TOKEN  3
-#define BORDER_FACTOR_X (0.005)
+#define BORDER_FACTOR_X (0.015)
 #define BORDER_FACTOR_Y (0.015)
 #define LEFT_BORDER   (33)
 #define RIGHT_BORDER  (40)
 #define TOP_BORDER    (21)
 #define BOTTOM_BORDER (46)
+
+#define DO_NOT_FIT_DATA (0)
+#define FIT_WINDOW      (1)
+#define FIT_FROM_DATE   (2)
 
 unsigned char normalYear[12] = {0, 3, 3, 6, 1, 4, 6, 2, 5, 0, 3, 5};
 unsigned char leapYear[2] = {6, 2};
@@ -96,7 +100,7 @@ char *monthName[12] = {"January",   "February", "March",    "April",
 		       "May",       "June",     "July",     "August",
 		       "September", "October",  "November", "December"};
 char *dayName[7] = {"Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
-char *maeFatVersion = "1.13";
+char *maeFatVersion = "2.0";
 char scratchString[200];
 
 int debugMessagesOn = FALSE;
@@ -154,13 +158,27 @@ int showComments         = FALSE;
 int showTarget           = FALSE;
 int plotInterval         =   365;
 int fitInterval          =    -1;
+int fitType              = DO_NOT_FIT_DATA;
 int losingWeightIsGood   =  TRUE;
 int startWithDataEntry   = FALSE;
 int plotTrendLine        =  TRUE;
-int fitWindow            =  TRUE;
+int plotDataPoints       =  TRUE;
+int plotWindow           =  TRUE;
 int fitDay               =    -1;
 int fitMonth             =    -1;
 int fitYear              =    -1;
+int plotStartDay         =    -1;
+int plotStartMonth       =    -1;
+int plotStartYear        =    -1;
+int plotEndDay           =    -1;
+int plotEndMonth         =    -1;
+int plotEndYear          =    -1;
+int plotFromFirst        = FALSE;
+int plotToLast           = FALSE;
+int haveGoalDate         = FALSE;
+int targetDay            =    -1;
+int targetMonth          =    -1;
+int targetYear           =    -1;
 /* End of settings file variables */
 
 GdkGC *gC[N_COLORS];
@@ -182,20 +200,23 @@ GdkPixmap *cairoPixmap = NULL;
 cairo_t *cairoContext = NULL;
 
 GtkWidget *window, *mainBox, *drawingArea, *weightButton, *dataEntryAccept, *dataEditDelete,
-  *dataEntryButton, *logButton, *trendButton, *settingsButton, *monthAccept, *iEButton,
+  *dataEntryButton, *logButton, *trendButton, *aboutYouButton, *monthAccept, *iEButton,
   *helpButton, *aboutButton, *commentText, *logSelectorButton, *iEFileButton, *fitFromButton,
-  *selector, *dataEntryStackable, *settingsStackable, *logStackable, *iESeparator,
+  *selector, *dataEntryStackable, *aboutYouStackable, *logStackable, *iESeparator,
   *dateButton, *timeButton, *trendStackable, *dateEditButton, *timeEditButton, *fitDateButton,
   *dataEditStackable, *heightSpin, *weightUnitLabel, *heightUnitLabel, *fitWindowButton,
   *iSOButton, *poundsButton, *kgButton, *inButton, *cmButton, *dayButton, *sWDEButton,
   *monthButton, *nonjudgementalButton, *hackerDietButton, *showCommentsButton, *plotTrendLineButton,
-  *plotFortnightButton, *plotMonthButton, *plotQuarterButton, *plot6MonthButton,
+  *plotFortnightButton, *plotMonthButton, *plotQuarterButton, *plot6MonthButton, *plotDataPointsButton,
   *plotYearButton, *plotHistoryButton, *targetSpinLabel, *targetSpin, *showTargetButton,
   *fitNothingButton, *fitMonthButton, *fitQuarterButton, *fit6MonthButton, *iEStackable,
   *fitYearButton, *fitHistoryButton, *losingWeightIsGoodButton, *gainingWeightIsGoodButton,
   *goalLabel, *iECommaButton, *iEWhitespaceButton, *iEFieldLabel[4], *iEWeightButton[4],
   *iEDayButton[4], *iETimeButton[4], *iECommentButton[4], *iESkipButton[4], *iENoneButton[4],
-  *iEFileLabel, *iEImportButton, *iEExportButton, *iEHackerDietFormatButton, *iECustomFormatButton;
+  *iEFileLabel, *iEImportButton, *iEExportButton, *iEHackerDietFormatButton, *iECustomFormatButton,
+  *plotSettingsButton, *fitSettingsButton, *plotSettingsStackable, *fitSettingsStackable,
+  *setGoalDateButton, *goalDateButton, *plotWindowButton, *plotFromButton, *plotStartButton,
+  *plotEndButton, *plotFromFirstButton, *plotToLastButton;
 
 /* Variables used for setting the format of import/export files */
 #define IE_FIELD_NOT_USED   (0)
@@ -431,15 +452,15 @@ int calculateGoalDate(double *jD, int *year, int *month, int *day,
 		      int *hour, int *minute, double *slope, double *intercept,
 		      int *nFitPoints)
 {
-  if ((fitInterval > 0)
-      || ((!fitWindow) && (fitYear > 0))) {
+  if (((fitType == FIT_WINDOW) && (fitInterval > 0))
+      || ((fitType == FIT_FROM_DATE) && (fitYear > 0))) {
     int nPoints = 0;
     double interval;
     double Sx, Sy, Sxx, Sxy;
     logEntry *ptr;
 
     Sx = Sy = Sxx = Sxy = 0.0;
-    if (fitWindow)
+    if (fitType == FIT_WINDOW)
       interval = (double)fitInterval;
     else {
       if (logRoot == NULL)
@@ -486,6 +507,8 @@ int calculateGoalDate(double *jD, int *year, int *month, int *day,
 	  fracJD = goalJD - wholeJD;
 	  hh = (int)(fracJD*24.0);
 	  mm = (int)((fracJD - ((double)hh)/24.0)*1440.0 + 0.5);
+	  if (mm >= 60)
+	    mm = 59;
 	  tJDToDate(goalJD, &yyyy, &mmmm, &dd);
 	}
 	if (jD != NULL)
@@ -776,13 +799,27 @@ void readSettings(char *fileName)
 	tokenCheck(inLine, "SHOW_TARGET",           INT_TOKEN, &showTarget);
 	tokenCheck(inLine, "PLOT_INTERVAL",         INT_TOKEN, &plotInterval);
 	tokenCheck(inLine, "FIT_INTERVAL",          INT_TOKEN, &fitInterval);
+	tokenCheck(inLine, "FIT_TYPE",              INT_TOKEN, &fitType);
 	tokenCheck(inLine, "LOSING_WEIGHT_IS_GOOD", INT_TOKEN, &losingWeightIsGood);
 	tokenCheck(inLine, "START_WITH_DATA_ENTRY", INT_TOKEN, &startWithDataEntry);
 	tokenCheck(inLine, "PLOT_TREND_LINE",       INT_TOKEN, &plotTrendLine);
-	tokenCheck(inLine, "FIT_WINDOW",            INT_TOKEN, &fitWindow);
+	tokenCheck(inLine, "PLOT_DATA_POINTS",      INT_TOKEN, &plotDataPoints);
+	tokenCheck(inLine, "PLOT_WINDOW",           INT_TOKEN, &plotWindow);
 	tokenCheck(inLine, "FIT_DAY",               INT_TOKEN, &fitDay);
 	tokenCheck(inLine, "FIT_MONTH",             INT_TOKEN, &fitMonth);
 	tokenCheck(inLine, "FIT_YEAR",              INT_TOKEN, &fitYear);
+	tokenCheck(inLine, "PLOT_START_DAY",        INT_TOKEN, &plotStartDay);
+	tokenCheck(inLine, "PLOT_START_MONTH",      INT_TOKEN, &plotStartMonth);
+	tokenCheck(inLine, "PLOT_START_YEAR",       INT_TOKEN, &plotStartYear);
+	tokenCheck(inLine, "PLOT_END_DAY",          INT_TOKEN, &plotEndDay);
+	tokenCheck(inLine, "PLOT_END_MONTH",        INT_TOKEN, &plotEndMonth);
+	tokenCheck(inLine, "PLOT_END_YEAR",         INT_TOKEN, &plotEndYear);
+	tokenCheck(inLine, "PLOT_FROM_FIRST",       INT_TOKEN, &plotFromFirst);
+	tokenCheck(inLine, "PLOT_TO_LAST",          INT_TOKEN, &plotToLast);
+	tokenCheck(inLine, "HAVE_GOAL_DATE",        INT_TOKEN, &haveGoalDate);
+	tokenCheck(inLine, "TARGET_DAY",            INT_TOKEN, &targetDay);
+	tokenCheck(inLine, "TARGET_MONTH",          INT_TOKEN, &targetMonth);
+	tokenCheck(inLine, "TARGET_YEAR",           INT_TOKEN, &targetYear);
       }
   }
   if (nonjudgementalColors)
@@ -803,7 +840,7 @@ void readSettings(char *fileName)
   C A L C  M A X I M A
 
   Calculate the maximum and minimum weight and time (JD) values for the
-  entire data set from startTJD though all later entries.  The plot
+  entire data set from startTJD though endTJD.  The plot
   maxima and minima are also computed.
  */
 void calcMaxima(double startTJD, double endTJD)
@@ -825,7 +862,7 @@ void calcMaxima(double startTJD, double endTJD)
     maxJD = -1.0; minJD = 1.0e30; maxWeight = -1.0; minWeight = 1.0e30;
     ptr = logRoot;
     while (ptr != NULL) {
-      if (ptr->time > startTJD) {
+      if ((ptr->time >= startTJD) && (ptr->time <= endTJD)) {
 	if (maxJD < ptr->time)
 	  maxJD = ptr->time;
 	if (minJD > ptr->time)
@@ -1098,6 +1135,7 @@ void redrawScreen(void)
   double labelDate, lastLabelDate;
   logEntry *ptr;
   logEntry *firstPlottable = NULL;
+  logEntry *lastPlottable = NULL;
   GdkPoint *dataPoints, *linePoints, *lineTops, box[4];
 
   /* Clear the entire display */
@@ -1113,7 +1151,7 @@ void redrawScreen(void)
 		    &tWidth, &tHeight, pixmap, displayWidth/2, 100, 0.0, TRUE, 0, OR_BLACK);
     renderPangoText("to enter initial entries.", OR_WHITE, BIG_PANGO_FONT,
 		    &tWidth, &tHeight, pixmap, displayWidth/2, 150, 0.0, TRUE, 0, OR_BLACK);
-    renderPangoText("Also, use the Settings menu", OR_WHITE, BIG_PANGO_FONT,
+    renderPangoText("Also, use the About You menu", OR_WHITE, BIG_PANGO_FONT,
 		    &tWidth, &tHeight, pixmap, displayWidth/2, 200, 0.0, TRUE, 0, OR_BLACK);
     renderPangoText("to set your height and units.", OR_WHITE, BIG_PANGO_FONT,
 		    &tWidth, &tHeight, pixmap, displayWidth/2, 250, 0.0, TRUE, 0, OR_BLACK);
@@ -1121,15 +1159,30 @@ void redrawScreen(void)
     int nFitPoints;
     double slope, intercept;
     double earliestTJDToPlot = 0.0;
+    double latestTJDToPlot = 0.0;
 
-    earliestTJDToPlot = lastEntry->time - plotInterval;
+    if (plotWindow)
+      earliestTJDToPlot = lastEntry->time - plotInterval;
+    else if (plotFromFirst)
+      earliestTJDToPlot = logRoot->time;
+    else
+      earliestTJDToPlot = (double)calculateJulianDate(plotStartYear, plotStartMonth, plotStartDay);
+    if (plotWindow || plotToLast)
+      latestTJDToPlot   = lastEntry->time;
+    else
+      latestTJDToPlot   = (double)calculateJulianDate(plotEndYear,   plotEndMonth,   plotEndDay);
     if (earliestTJDToPlot < 0.0)
       earliestTJDToPlot = logRoot->time;
-    if ((fitInterval > 0) && showTarget &&
-	(gotGoal = calculateGoalDate(&goalDate, NULL, NULL, NULL, NULL, NULL, &slope, &intercept, &nFitPoints)))
-      calcMaxima(earliestTJDToPlot-1.0, goalDate);
-    else
-      calcMaxima(earliestTJDToPlot-1.0, lastEntry->time);
+    if (latestTJDToPlot > lastEntry->time)
+      latestTJDToPlot = lastEntry->time;
+    if ((fitType != DO_NOT_FIT_DATA) && (!((fitType == FIT_WINDOW) && (fitInterval < 2))) && showTarget &&
+	(gotGoal = calculateGoalDate(&goalDate, NULL, NULL, NULL, NULL, NULL, &slope, &intercept, &nFitPoints))) {
+      if (goalDate > latestTJDToPlot)
+	calcMaxima(earliestTJDToPlot, goalDate);
+      else
+	calcMaxima(earliestTJDToPlot, latestTJDToPlot);
+    } else
+      calcMaxima(earliestTJDToPlot, latestTJDToPlot);
     plotWeightInterval = maxWeight - minWeight;
     dataPoints = (GdkPoint *)malloc(nDataPoints * sizeof(GdkPoint));
     if (dataPoints == NULL) {
@@ -1167,26 +1220,34 @@ void redrawScreen(void)
     tJDToDate((double)((int)logRoot->time), &sYear, &sMonth, &sDay);
     if (logRoot->next == NULL) {
       eDay = sDay; eMonth = sMonth; eYear = sYear;
-      firstPlottable = logRoot;
+      firstPlottable = lastPlottable = logRoot;
       onlyOneMonthPlotted = TRUE;
     } else {
-      /* Find the first data point which should be plotted. */
+      /* Find the first and last data points which should be plotted. */
       ptr = lastEntry;
       while (ptr != NULL) {
 	if (ptr->time >= earliestTJDToPlot)
 	  firstPlottable = ptr;
 	ptr = ptr->last;
       }
+      ptr = logRoot;
+      while (ptr != NULL) {
+	if (ptr->time <= latestTJDToPlot)
+	  lastPlottable = ptr;
+	ptr = ptr->next;
+      }
+
       /* Generate the starting and stopping dates for the plot. */
       tJDToDate((double)((int)firstPlottable->time), &sYear, &sMonth, &sDay);
       if (gotGoal)
 	tJDToDate(goalDate, &eYear, &eMonth, &eDay);
       else
-	tJDToDate((double)((int)lastEntry->time), &eYear, &eMonth, &eDay);
+	tJDToDate((double)((int)lastPlottable->time), &eYear, &eMonth, &eDay);
       if ((sMonth == eMonth) && (sYear == eYear))
 	onlyOneMonthPlotted = TRUE;
       else
 	onlyOneMonthPlotted = FALSE;
+
     }
     sDayS = sDay; sMonthS = sMonth; sYearS = sYear;
     if (showTarget) {
@@ -1196,8 +1257,8 @@ void redrawScreen(void)
 	double leftY, fitStartTime;
 
 	/* Draw a line showing begining of fit interval */
-	if (fitWindow)
-	  fitStartTime = lastEntry->time - (double)fitInterval;
+	if (fitType == FIT_WINDOW)
+	  fitStartTime = latestTJDToPlot - (double)fitInterval;
 	else
 	  fitStartTime = (double)calculateJulianDate(fitYear, fitMonth, fitDay);
 	screenCoordinates(xScale, yScale, fitStartTime, plotMinY, &x0, &y0);
@@ -1378,24 +1439,23 @@ void redrawScreen(void)
     } else {
       /* More than one month covered by the plot */
       x = makeMonthString(xScale, yScale, firstPlottable->time);
-      if (gotGoal && (goalDate > maxJD))
+      if (gotGoal && (goalDate >= maxJD))
 	plotTimeInterval = goalDate - minJD;
       else
 	plotTimeInterval = maxJD - minJD;
-      tJDToDate(ptr->time, &sYear, &sMonth, &sDay);
+      tJDToDate(firstPlottable->time, &sYear, &sMonth, &sDay);
       if (x < RIGHT_BORDER)
 	x = RIGHT_BORDER;
       if (((plotTimeInterval < 5.0) || (sDay < 26)) && ((plotMaxX - plotMinX) < 180.0))
 	renderPangoText(scratchString, OR_WHITE, SMALL_PANGO_FONT,
 			&tWidth, &tHeight, pixmap, x, displayHeight-35, 0.0, TRUE, 0, OR_BLACK);
-      labelDate = firstPlottable->time;
-      if (gotGoal)
+      if (gotGoal && (goalDate >= maxJD))
 	lastLabelDate = goalDate;
       else
-	lastLabelDate = lastEntry->time;
+	lastLabelDate = lastPlottable->time;
       for (labelDate = earliestTJDToPlot; labelDate <= lastLabelDate; labelDate += 1.0) {
 	int plotIt = FALSE;
-	
+
 	tJDToDate(labelDate, &eYear, &eMonth, &eDay);
 	if (sMonth != eMonth) {
 	  sMonth = eMonth;
@@ -1418,7 +1478,7 @@ void redrawScreen(void)
 	    plotIt = TRUE;
 	  } else
 	    plotIt = FALSE;
-	  if (plotIt) {
+	  if (plotIt && (x >= RIGHT_BORDER)) {
 	    renderPangoText(scratchString, OR_WHITE, SMALL_PANGO_FONT,
 			    &tWidth, &tHeight, pixmap, x, displayHeight-35, 0.0, TRUE, 0, OR_BLACK);
 	    if (eMonth == 1) {
@@ -1466,7 +1526,7 @@ void redrawScreen(void)
 
     ptr = logRoot;
     while (ptr != NULL) {
-      if (ptr->time >= earliestTJDToPlot) {
+      if ((ptr->time >= earliestTJDToPlot) && (ptr->time <= latestTJDToPlot)) {
 	screenCoordinates(xScale, yScale, ptr->time, ptr->weight,
 			  &dataPoints[nPoints].x, &dataPoints[nPoints].y);
 	screenCoordinates(xScale, yScale, ptr->time, calculateWeightedAverage(ptr),
@@ -1485,17 +1545,17 @@ void redrawScreen(void)
     }
     if (onlyOneMonthPlotted)
       sprintf(scratchString, "Weight and Trend Data for %s %d   (%d days, %d entries)",
-	      monthName[sMonthS-1], sYearS, (int)(0.5 + lastEntry->time - earliestTJDToPlot), nPoints);
+	      monthName[sMonthS-1], sYearS, (int)(0.5 + latestTJDToPlot - earliestTJDToPlot), nPoints);
     else {
-      tJDToDate((double)((int)lastEntry->time), &eYear, &eMonth, &eDay);
+      tJDToDate((double)((int)latestTJDToPlot), &eYear, &eMonth, &eDay);
       if (monthFirst == 2) {
 	sprintf(scratchString, "Weight and Trend Data for %d-%02d-%02d through %d-%02d-%02d   (%d days, %d entries)",
-		sYearS, sMonthS, sDayS, eYear, eMonth, eDay, (int)(0.5 + lastEntry->time - earliestTJDToPlot), nPoints);
+		sYearS, sMonthS, sDayS, eYear, eMonth, eDay, (int)(0.5 + latestTJDToPlot - earliestTJDToPlot), nPoints);
       } else {
 	if (monthFirst == 1) {
 	  int temp;
 	  
-	  temp = sDay;
+	  temp = sDayS;
 	  sDayS = sMonthS;
 	  sMonthS = temp;
 	  temp = eDay;
@@ -1503,7 +1563,7 @@ void redrawScreen(void)
 	  eMonth = temp;
 	}
 	sprintf(scratchString, "Weight and Trend Data for %d/%d/%d through %d/%d/%d   (%d days, %d entries)",
-		sDayS, sMonthS, sYearS, eDay, eMonth, eYear, (int)(0.5 + lastEntry->time - earliestTJDToPlot), nPoints);
+		sDayS, sMonthS, sYearS, eDay, eMonth, eYear, (int)(0.5 + latestTJDToPlot - earliestTJDToPlot), nPoints);
       }
     }
     renderPangoText(scratchString, OR_WHITE, SMALL_PANGO_FONT,
@@ -1516,7 +1576,7 @@ void redrawScreen(void)
 
       ptr = logRoot;
       while (ptr != NULL) {
-	if (ptr->time > earliestTJDToPlot) {
+	if ((ptr->time >= earliestTJDToPlot) && (ptr->time <= latestTJDToPlot)) {
 	  if (ptr->comment) {
 	    screenCoordinates(xScale, yScale, ptr->time, calculateWeightedAverage(ptr), &x, &y);
 	    renderPangoText(ptr->comment, OR_PINK, SMALL_PANGO_FONT,
@@ -1535,31 +1595,33 @@ void redrawScreen(void)
     }
     if (plotTrendLine)
       gdk_draw_lines(pixmap, gC[OR_YELLOW], linePoints, nCurvePoints);
-    if (plotTimeInterval < 14.0)
-      inc = 5;
-    else if (plotTimeInterval < 100.0)
-      inc = 4;
-    else if (plotTimeInterval < 200.0)
-      inc = 3;
-    else if (plotTimeInterval < 400.0)
-      inc = 2;
-    else
-      inc = 1;
-    for (i = 0; i < nPoints; i++) {
-      box[0].x = dataPoints[i].x;
-      box[0].y = dataPoints[i].y + inc;
-      box[1].x = dataPoints[i].x + inc;
-      box[1].y = dataPoints[i].y;
-      box[2].x = dataPoints[i].x;
-      box[2].y = dataPoints[i].y - inc;
-      box[3].x = dataPoints[i].x - inc;
-      box[3].y = dataPoints[i].y;
-      gdk_draw_polygon(pixmap, gC[OR_WHITE], TRUE, box, 4);
-      if ((plotTimeInterval < 200.0) && !gotGoal){
-	if (box[0].y < lineTops[i].y - 2)
-	  gdk_draw_line(pixmap, gC[badColor], box[0].x, box[0].y, box[0].x, lineTops[i].y-1);
-	if (box[2].y > lineTops[i].y + 2)
-	  gdk_draw_line(pixmap, gC[goodColor], box[0].x, box[2].y, box[0].x, lineTops[i].y+1);
+    if (plotDataPoints) {
+      if (plotTimeInterval < 14.0)
+	inc = 5;
+      else if (plotTimeInterval < 100.0)
+	inc = 4;
+      else if (plotTimeInterval < 200.0)
+	inc = 3;
+      else if (plotTimeInterval < 400.0)
+	inc = 2;
+      else
+	inc = 1;
+      for (i = 0; i < nPoints; i++) {
+	box[0].x = dataPoints[i].x;
+	box[0].y = dataPoints[i].y + inc;
+	box[1].x = dataPoints[i].x + inc;
+	box[1].y = dataPoints[i].y;
+	box[2].x = dataPoints[i].x;
+	box[2].y = dataPoints[i].y - inc;
+	box[3].x = dataPoints[i].x - inc;
+	box[3].y = dataPoints[i].y;
+	gdk_draw_polygon(pixmap, gC[OR_WHITE], TRUE, box, 4);
+	if ((plotTimeInterval < 200.0) && !gotGoal){
+	  if (box[0].y < lineTops[i].y - 2)
+	    gdk_draw_line(pixmap, gC[badColor], box[0].x, box[0].y, box[0].x, lineTops[i].y-1);
+	  if (box[2].y > lineTops[i].y + 2)
+	    gdk_draw_line(pixmap, gC[goodColor], box[0].x, box[2].y, box[0].x, lineTops[i].y+1);
+	}
       }
     }
     free(dataPoints); free(linePoints); free(lineTops);
@@ -2154,6 +2216,7 @@ void trendButtonClicked(GtkButton *button, gpointer userData)
   int nItems = 0;
   int delta = 20;
   int delta2 = 13;
+  int shouldSkipFortnight = FALSE;
   float calCon;
   float startWeightW, endWeightW, maxWeightW, minWeightW, aveWeightW;
   float startWeightF, endWeightF, maxWeightF, minWeightF, aveWeightF;
@@ -2202,10 +2265,14 @@ void trendButtonClicked(GtkButton *button, gpointer userData)
   if (calcStats(-1, &startWeightH, &endWeightH, &maxWeightH, &minWeightH, &aveWeightH))
     nItems++;
 
+  if (haveGoalDate && (nItems >= 6)
+      && calculateGoalDate(&goalJD, &goalYear, &goalMonth, &goalDay, &goalHour, &goalMinute, NULL, NULL, NULL))
+    shouldSkipFortnight = TRUE;
+
   box[0].x = 0;            box[0].y = 100-delta;
   box[1].x = displayWidth; box[1].y = 100-delta;
-  box[2].x = displayWidth; box[2].y = displayHeight - 15 - (6-nItems)*35 - delta;
-  box[3].x = 0;            box[3].y = displayHeight - 15 - (6-nItems)*35 - delta;
+  box[2].x = displayWidth; box[2].y = displayHeight - 15 - (6-(nItems-shouldSkipFortnight))*35 - delta;
+  box[3].x = 0;            box[3].y = displayHeight - 15 - (6-(nItems-shouldSkipFortnight))*35 - delta;
   gdk_draw_polygon(pixmap, gC[OR_DARK_GREY], TRUE, box, 4);
 
   tJDToDate((double)((int)lastEntry->time), &year, &month, &day);
@@ -2269,40 +2336,40 @@ void trendButtonClicked(GtkButton *button, gpointer userData)
     float temp;
 
     if (line == (nItems-1)) {
-      renderPangoText("History", OR_WHITE, MEDIUM_PANGO_FONT,
-		      &tWidth, &tHeight, pixmap, 5, 200+(35*line)-delta, 0.0, FALSE, 0, OR_DARK_GREY);
+      renderPangoText("All History", OR_WHITE, MEDIUM_PANGO_FONT,
+		      &tWidth, &tHeight, pixmap, 5, 200+(35*(line-shouldSkipFortnight))-delta, 0.0, FALSE, 0, OR_DARK_GREY);
       deltaTime = lastEntry->time - logRoot->time;
       temp = (startWeightH-endWeightH)/(deltaTime/7.0);
       if (nonjudgementalColors) {
 	sprintf(scratchString, "%4.2f", -temp);
 	renderPangoText(scratchString, OR_WHITE, MEDIUM_PANGO_FONT,
-			&tWidth, &tHeight, pixmap, 170, 200+(35*line)-delta, 0.0, FALSE, 0, OR_DARK_GREY);
+			&tWidth, &tHeight, pixmap, 170, 200+(35*(line-shouldSkipFortnight))-delta, 0.0, FALSE, 0, OR_DARK_GREY);
       } else {
 	sprintf(scratchString, "%4.2f", fabs(temp));
 	if (temp < 0.0) 
 	  renderPangoText(scratchString, badColor, MEDIUM_PANGO_FONT,
-			  &tWidth, &tHeight, pixmap, 170, 200+(35*line)-delta, 0.0, FALSE, 0, OR_DARK_GREY);
+			  &tWidth, &tHeight, pixmap, 170, 200+(35*(line-shouldSkipFortnight))-delta, 0.0, FALSE, 0, OR_DARK_GREY);
 	else
 	  renderPangoText(scratchString, goodColor, MEDIUM_PANGO_FONT,
-			  &tWidth, &tHeight, pixmap, 170, 200+(35*line)-delta, 0.0, FALSE, 0, OR_DARK_GREY);
+			  &tWidth, &tHeight, pixmap, 170, 200+(35*(line-shouldSkipFortnight))-delta, 0.0, FALSE, 0, OR_DARK_GREY);
       }
       temp = calCon*(startWeightH-endWeightH)*(CALORIES_PER_POUND/deltaTime);
       if (nonjudgementalColors) {
 	sprintf(scratchString, "%4.0f", -temp);
 	renderPangoText(scratchString, OR_WHITE, MEDIUM_PANGO_FONT,
-		      &tWidth, &tHeight, pixmap, 380, 200+(35*line)-delta, 0.0, FALSE, 0, OR_DARK_GREY);
+		      &tWidth, &tHeight, pixmap, 380, 200+(35*(line-shouldSkipFortnight))-delta, 0.0, FALSE, 0, OR_DARK_GREY);
       } else {
 	sprintf(scratchString, "%4.0f", fabs(temp));
 	if (temp < 0.0)
 	  renderPangoText(scratchString, badColor, MEDIUM_PANGO_FONT,
-			  &tWidth, &tHeight, pixmap, 380, 200+(35*line)-delta, 0.0, FALSE, 0, OR_DARK_GREY);
+			  &tWidth, &tHeight, pixmap, 380, 200+(35*(line-shouldSkipFortnight))-delta, 0.0, FALSE, 0, OR_DARK_GREY);
 	else
 	  renderPangoText(scratchString, goodColor, MEDIUM_PANGO_FONT,
-			  &tWidth, &tHeight, pixmap, 380, 200+(35*line)-delta, 0.0, FALSE, 0, OR_DARK_GREY);
+			  &tWidth, &tHeight, pixmap, 380, 200+(35*(line-shouldSkipFortnight))-delta, 0.0, FALSE, 0, OR_DARK_GREY);
       }
       sprintf(scratchString, "%5.1f    %5.1f    %5.1f", minWeightH, aveWeightH, maxWeightH);
       renderPangoText(scratchString, OR_WHITE, MEDIUM_PANGO_FONT,
-		      &tWidth, &tHeight, pixmap, 561, 200+(35*line)-delta, 0.0, FALSE, 0, OR_DARK_GREY);
+		      &tWidth, &tHeight, pixmap, 561, 200+(35*(line-shouldSkipFortnight))-delta, 0.0, FALSE, 0, OR_DARK_GREY);
     } else
       switch (line) {
       case 0:
@@ -2341,152 +2408,210 @@ void trendButtonClicked(GtkButton *button, gpointer userData)
 			&tWidth, &tHeight, pixmap, 561, 200+(35*line)-delta, 0.0, FALSE, 0, OR_DARK_GREY);
 	break;
       case 1:
-	renderPangoText("Fortnight", OR_WHITE, MEDIUM_PANGO_FONT,
-			&tWidth, &tHeight, pixmap, 5, 200+(35*line)-delta, 0.0, FALSE, 0, OR_DARK_GREY);      
-	temp = (startWeightF-endWeightF)/2.0;
-	if (nonjudgementalColors) {
-	  sprintf(scratchString, "%4.2f", -temp);
-	  renderPangoText(scratchString, OR_WHITE, MEDIUM_PANGO_FONT,
-			  &tWidth, &tHeight, pixmap, 170, 200+(35*line)-delta, 0.0, FALSE, 0, OR_DARK_GREY);
-	} else {
-	  sprintf(scratchString, "%4.2f", fabs(temp));
-	  if (temp < 0.0) 
-	    renderPangoText(scratchString, badColor, MEDIUM_PANGO_FONT,
+	if (!shouldSkipFortnight) {
+	  shouldSkipFortnight = FALSE;
+	  renderPangoText("Fortnight", OR_WHITE, MEDIUM_PANGO_FONT,
+			  &tWidth, &tHeight, pixmap, 5, 200+(35*line)-delta, 0.0, FALSE, 0, OR_DARK_GREY);      
+	  temp = (startWeightF-endWeightF)/2.0;
+	  if (nonjudgementalColors) {
+	    sprintf(scratchString, "%4.2f", -temp);
+	    renderPangoText(scratchString, OR_WHITE, MEDIUM_PANGO_FONT,
 			    &tWidth, &tHeight, pixmap, 170, 200+(35*line)-delta, 0.0, FALSE, 0, OR_DARK_GREY);
-	  else
-	    renderPangoText(scratchString, goodColor, MEDIUM_PANGO_FONT,
-			    &tWidth, &tHeight, pixmap, 170, 200+(35*line)-delta, 0.0, FALSE, 0, OR_DARK_GREY);
-	}
-	temp = calCon*(startWeightF-endWeightF)*(CALORIES_PER_POUND/14.0);
-	if (nonjudgementalColors) {
-	  sprintf(scratchString, "%4.0f", -temp);
+	  } else {
+	    sprintf(scratchString, "%4.2f", fabs(temp));
+	    if (temp < 0.0) 
+	      renderPangoText(scratchString, badColor, MEDIUM_PANGO_FONT,
+			      &tWidth, &tHeight, pixmap, 170, 200+(35*line)-delta, 0.0, FALSE, 0, OR_DARK_GREY);
+	    else
+	      renderPangoText(scratchString, goodColor, MEDIUM_PANGO_FONT,
+			      &tWidth, &tHeight, pixmap, 170, 200+(35*line)-delta, 0.0, FALSE, 0, OR_DARK_GREY);
+	  }
+	  temp = calCon*(startWeightF-endWeightF)*(CALORIES_PER_POUND/14.0);
+	  if (nonjudgementalColors) {
+	    sprintf(scratchString, "%4.0f", -temp);
+	    renderPangoText(scratchString, OR_WHITE, MEDIUM_PANGO_FONT,
+			    &tWidth, &tHeight, pixmap, 380, 200+(35*line)-delta, 0.0, FALSE, 0, OR_DARK_GREY);
+	  } else {
+	    sprintf(scratchString, "%4.0f", fabs(temp));
+	    if (temp < 0.0)
+	      renderPangoText(scratchString, badColor, MEDIUM_PANGO_FONT,
+			      &tWidth, &tHeight, pixmap, 380, 200+(35*line)-delta, 0.0, FALSE, 0, OR_DARK_GREY);
+	    else
+	      renderPangoText(scratchString, goodColor, MEDIUM_PANGO_FONT,
+			      &tWidth, &tHeight, pixmap, 380, 200+(35*line)-delta, 0.0, FALSE, 0, OR_DARK_GREY);
+	  }
+	  sprintf(scratchString, "%5.1f    %5.1f    %5.1f", minWeightF, aveWeightF, maxWeightF);
 	  renderPangoText(scratchString, OR_WHITE, MEDIUM_PANGO_FONT,
-			  &tWidth, &tHeight, pixmap, 380, 200+(35*line)-delta, 0.0, FALSE, 0, OR_DARK_GREY);
-	} else {
-	  sprintf(scratchString, "%4.0f", fabs(temp));
-	  if (temp < 0.0)
-	    renderPangoText(scratchString, badColor, MEDIUM_PANGO_FONT,
-			    &tWidth, &tHeight, pixmap, 380, 200+(35*line)-delta, 0.0, FALSE, 0, OR_DARK_GREY);
-	  else
-	    renderPangoText(scratchString, goodColor, MEDIUM_PANGO_FONT,
-			    &tWidth, &tHeight, pixmap, 380, 200+(35*line)-delta, 0.0, FALSE, 0, OR_DARK_GREY);
+			  &tWidth, &tHeight, pixmap, 561, 200+(35*line)-delta, 0.0, FALSE, 0, OR_DARK_GREY);
 	}
-	sprintf(scratchString, "%5.1f    %5.1f    %5.1f", minWeightF, aveWeightF, maxWeightF);
-	renderPangoText(scratchString, OR_WHITE, MEDIUM_PANGO_FONT,
-			&tWidth, &tHeight, pixmap, 561, 200+(35*line)-delta, 0.0, FALSE, 0, OR_DARK_GREY);
 	break;
       case 2:
 	renderPangoText("Month", OR_WHITE, MEDIUM_PANGO_FONT,
-			&tWidth, &tHeight, pixmap, 5, 200+(35*line)-delta, 0.0, FALSE, 0, OR_DARK_GREY);      
+			&tWidth, &tHeight, pixmap, 5, 200+(35*(line-shouldSkipFortnight))-delta, 0.0, FALSE, 0, OR_DARK_GREY);      
 	temp = (startWeightM-endWeightM)/(30.0/7.0);
 	if (nonjudgementalColors) {
 	  sprintf(scratchString, "%4.2f", -temp);
 	  renderPangoText(scratchString, OR_WHITE, MEDIUM_PANGO_FONT,
-			  &tWidth, &tHeight, pixmap, 170, 200+(35*line)-delta, 0.0, FALSE, 0, OR_DARK_GREY);
+			  &tWidth, &tHeight, pixmap, 170, 200+(35*(line-shouldSkipFortnight))-delta, 0.0, FALSE, 0, OR_DARK_GREY);
 	} else {
 	  sprintf(scratchString, "%4.2f", fabs(temp));
 	  if (temp < 0.0) 
 	    renderPangoText(scratchString, badColor, MEDIUM_PANGO_FONT,
-			    &tWidth, &tHeight, pixmap, 170, 200+(35*line)-delta, 0.0, FALSE, 0, OR_DARK_GREY);
+			    &tWidth, &tHeight, pixmap, 170, 200+(35*(line-shouldSkipFortnight))-delta, 0.0, FALSE, 0, OR_DARK_GREY);
 	  else
 	    renderPangoText(scratchString, goodColor, MEDIUM_PANGO_FONT,
-			    &tWidth, &tHeight, pixmap, 170, 200+(35*line)-delta, 0.0, FALSE, 0, OR_DARK_GREY);
+			    &tWidth, &tHeight, pixmap, 170, 200+(35*(line-shouldSkipFortnight))-delta, 0.0, FALSE, 0, OR_DARK_GREY);
 	}
 	temp = calCon*(startWeightM-endWeightM)*(CALORIES_PER_POUND/30.0);
 	if (nonjudgementalColors) {
 	  sprintf(scratchString, "%4.0f", -temp);
 	  renderPangoText(scratchString, OR_WHITE, MEDIUM_PANGO_FONT,
-			  &tWidth, &tHeight, pixmap, 380, 200+(35*line)-delta, 0.0, FALSE, 0, OR_DARK_GREY);
+			  &tWidth, &tHeight, pixmap, 380, 200+(35*(line-shouldSkipFortnight))-delta, 0.0, FALSE, 0, OR_DARK_GREY);
 	} else {
 	  sprintf(scratchString, "%4.0f", fabs(temp));
 	  if (temp < 0.0)
 	    renderPangoText(scratchString, badColor, MEDIUM_PANGO_FONT,
-			    &tWidth, &tHeight, pixmap, 380, 200+(35*line)-delta, 0.0, FALSE, 0, OR_DARK_GREY);
+			    &tWidth, &tHeight, pixmap, 380, 200+(35*(line-shouldSkipFortnight))-delta, 0.0, FALSE, 0, OR_DARK_GREY);
 	  else
 	    renderPangoText(scratchString, goodColor, MEDIUM_PANGO_FONT,
-			    &tWidth, &tHeight, pixmap, 380, 200+(35*line)-delta, 0.0, FALSE, 0, OR_DARK_GREY);
+			    &tWidth, &tHeight, pixmap, 380, 200+(35*(line-shouldSkipFortnight))-delta, 0.0, FALSE, 0, OR_DARK_GREY);
 	}
 	sprintf(scratchString, "%5.1f    %5.1f    %5.1f", minWeightM, aveWeightM, maxWeightM);
 	renderPangoText(scratchString, OR_WHITE, MEDIUM_PANGO_FONT,
-			&tWidth, &tHeight, pixmap, 561, 200+(35*line)-delta, 0.0, FALSE, 0, OR_DARK_GREY);
+			&tWidth, &tHeight, pixmap, 561, 200+(35*(line-shouldSkipFortnight))-delta, 0.0, FALSE, 0, OR_DARK_GREY);
 	break;
       case 3:
 	renderPangoText("Quarter", OR_WHITE, MEDIUM_PANGO_FONT,
-			&tWidth, &tHeight, pixmap, 5, 200+(35*line)-delta, 0.0, FALSE, 0, OR_DARK_GREY);      
+			&tWidth, &tHeight, pixmap, 5, 200+(35*(line-shouldSkipFortnight))-delta, 0.0, FALSE, 0, OR_DARK_GREY);      
 	temp = (startWeightQ-endWeightQ)/13.0;
 	if (nonjudgementalColors) {
 	  sprintf(scratchString, "%4.2f", -temp);
 	  renderPangoText(scratchString, OR_WHITE, MEDIUM_PANGO_FONT,
-			  &tWidth, &tHeight, pixmap, 170, 200+(35*line)-delta, 0.0, FALSE, 0, OR_DARK_GREY);
+			  &tWidth, &tHeight, pixmap, 170, 200+(35*(line-shouldSkipFortnight))-delta, 0.0, FALSE, 0, OR_DARK_GREY);
 	} else {
 	  sprintf(scratchString, "%4.2f", fabs(temp));
 	  if (temp < 0.0) 
 	    renderPangoText(scratchString, badColor, MEDIUM_PANGO_FONT,
-			    &tWidth, &tHeight, pixmap, 170, 200+(35*line)-delta, 0.0, FALSE, 0, OR_DARK_GREY);
+			    &tWidth, &tHeight, pixmap, 170, 200+(35*(line-shouldSkipFortnight))-delta, 0.0, FALSE, 0, OR_DARK_GREY);
 	  else
 	    renderPangoText(scratchString, goodColor, MEDIUM_PANGO_FONT,
-			    &tWidth, &tHeight, pixmap, 170, 200+(35*line)-delta, 0.0, FALSE, 0, OR_DARK_GREY);
+			    &tWidth, &tHeight, pixmap, 170, 200+(35*(line-shouldSkipFortnight))-delta, 0.0, FALSE, 0, OR_DARK_GREY);
 	}
 	temp = calCon*(startWeightQ-endWeightQ)*(CALORIES_PER_POUND/91.0);
 	if (nonjudgementalColors) {
 	  sprintf(scratchString, "%4.0f", -temp);
 	  renderPangoText(scratchString, OR_WHITE, MEDIUM_PANGO_FONT,
-			  &tWidth, &tHeight, pixmap, 380, 200+(35*line)-delta, 0.0, FALSE, 0, OR_DARK_GREY);
+			  &tWidth, &tHeight, pixmap, 380, 200+(35*(line-shouldSkipFortnight))-delta, 0.0, FALSE, 0, OR_DARK_GREY);
 	} else {
 	  sprintf(scratchString, "%4.0f", fabs(temp));
 	  if (temp < 0.0)
 	    renderPangoText(scratchString, badColor, MEDIUM_PANGO_FONT,
-			    &tWidth, &tHeight, pixmap, 380, 200+(35*line)-delta, 0.0, FALSE, 0, OR_DARK_GREY);
+			    &tWidth, &tHeight, pixmap, 380, 200+(35*(line-shouldSkipFortnight))-delta, 0.0, FALSE, 0, OR_DARK_GREY);
 	  else
 	    renderPangoText(scratchString, goodColor, MEDIUM_PANGO_FONT,
-			    &tWidth, &tHeight, pixmap, 380, 200+(35*line)-delta, 0.0, FALSE, 0, OR_DARK_GREY);
+			    &tWidth, &tHeight, pixmap, 380, 200+(35*(line-shouldSkipFortnight))-delta, 0.0, FALSE, 0, OR_DARK_GREY);
 	}
 	sprintf(scratchString, "%5.1f    %5.1f    %5.1f", minWeightQ, aveWeightQ, maxWeightQ);
 	renderPangoText(scratchString, OR_WHITE, MEDIUM_PANGO_FONT,
-			&tWidth, &tHeight, pixmap, 561, 200+(35*line)-delta, 0.0, FALSE, 0, OR_DARK_GREY);
+			&tWidth, &tHeight, pixmap, 561, 200+(35*(line-shouldSkipFortnight))-delta, 0.0, FALSE, 0, OR_DARK_GREY);
 	break;
       case 4:
 	renderPangoText("Year", OR_WHITE, MEDIUM_PANGO_FONT,
-			&tWidth, &tHeight, pixmap, 5, 200+(35*line)-delta, 0.0, FALSE, 0, OR_DARK_GREY);      
+			&tWidth, &tHeight, pixmap, 5, 200+(35*(line-shouldSkipFortnight))-delta, 0.0, FALSE, 0, OR_DARK_GREY);      
 	temp = (startWeightY-endWeightY)/(365.0/7.0);
 	if (nonjudgementalColors) {
 	  sprintf(scratchString, "%4.2f", -temp);
 	  renderPangoText(scratchString, OR_WHITE, MEDIUM_PANGO_FONT,
-			  &tWidth, &tHeight, pixmap, 170, 200+(35*line)-delta, 0.0, FALSE, 0, OR_DARK_GREY);
+			  &tWidth, &tHeight, pixmap, 170, 200+(35*(line-shouldSkipFortnight))-delta, 0.0, FALSE, 0, OR_DARK_GREY);
 	} else {
 	  sprintf(scratchString, "%4.2f", fabs(temp));
 	  if (temp < 0.0) 
 	    renderPangoText(scratchString, badColor, MEDIUM_PANGO_FONT,
-			    &tWidth, &tHeight, pixmap, 170, 200+(35*line)-delta, 0.0, FALSE, 0, OR_DARK_GREY);
+			    &tWidth, &tHeight, pixmap, 170, 200+(35*(line-shouldSkipFortnight))-delta, 0.0, FALSE, 0, OR_DARK_GREY);
 	  else
 	    renderPangoText(scratchString, goodColor, MEDIUM_PANGO_FONT,
-			    &tWidth, &tHeight, pixmap, 170, 200+(35*line)-delta, 0.0, FALSE, 0, OR_DARK_GREY);
+			    &tWidth, &tHeight, pixmap, 170, 200+(35*(line-shouldSkipFortnight))-delta, 0.0, FALSE, 0, OR_DARK_GREY);
 	}
 	temp = calCon*(startWeightY-endWeightY)*(CALORIES_PER_POUND/365.0);
 	if (nonjudgementalColors) {
 	  sprintf(scratchString, "%4.0f", -temp);
 	  renderPangoText(scratchString, OR_WHITE, MEDIUM_PANGO_FONT,
-			  &tWidth, &tHeight, pixmap, 380, 200+(35*line)-delta, 0.0, FALSE, 0, OR_DARK_GREY);
+			  &tWidth, &tHeight, pixmap, 380, 200+(35*(line-shouldSkipFortnight))-delta, 0.0, FALSE, 0, OR_DARK_GREY);
 	} else {
 	  sprintf(scratchString, "%4.0f", fabs(temp));
 	  if (temp < 0.0)
 	    renderPangoText(scratchString, badColor, MEDIUM_PANGO_FONT,
-			    &tWidth, &tHeight, pixmap, 380, 200+(35*line)-delta, 0.0, FALSE, 0, OR_DARK_GREY);
+			    &tWidth, &tHeight, pixmap, 380, 200+(35*(line-shouldSkipFortnight))-delta, 0.0, FALSE, 0, OR_DARK_GREY);
 	  else
 	    renderPangoText(scratchString, goodColor, MEDIUM_PANGO_FONT,
-			    &tWidth, &tHeight, pixmap, 380, 200+(35*line)-delta, 0.0, FALSE, 0, OR_DARK_GREY);
+			    &tWidth, &tHeight, pixmap, 380, 200+(35*(line-shouldSkipFortnight))-delta, 0.0, FALSE, 0, OR_DARK_GREY);
 	}
 	sprintf(scratchString, "%5.1f    %5.1f    %5.1f", minWeightY, aveWeightY, maxWeightY);
 	renderPangoText(scratchString, OR_WHITE, MEDIUM_PANGO_FONT,
-			&tWidth, &tHeight, pixmap, 561, 200+(35*line)-delta, 0.0, FALSE, 0, OR_DARK_GREY);
+			&tWidth, &tHeight, pixmap, 561, 200+(35*(line-shouldSkipFortnight))-delta, 0.0, FALSE, 0, OR_DARK_GREY);
 	break;
       }
+    if (haveGoalDate) {
+      int y;
+      double targetTJD, daysLeft;
+
+      targetTJD = (double)calculateJulianDate(targetYear, targetMonth, targetDay);
+      daysLeft = targetTJD - lastEntry->time;
+      if (daysLeft <= 0.0) {
+	sprintf(scratchString, "Your goal date is in the past.");
+      } else {
+	double weightNow, calsPerDay;
+	char unitString[4];
+
+	weightNow = calculateWeightedAverage(lastEntry);
+	if (weightkg) {
+	  calsPerDay = (weightNow-myTarget)*3500.0/(daysLeft*KG_PER_LB);
+	  strcpy(unitString, "kg");
+	} else {
+	  calsPerDay = (weightNow-myTarget)*3500.0/daysLeft;
+	  strcpy(unitString, "lbs");
+	}
+	if (monthFirst == 2) {
+	  if (calsPerDay < 0.0)
+	    sprintf(scratchString, "To reach %0.0f %s by %d-%02d-%02d eat %0.0f calories/day more.",
+		    myTarget, unitString, targetYear, targetMonth, targetDay, -calsPerDay);
+	  else
+	    sprintf(scratchString, "To reach %0.0f %s by %d-%02d-%02d eat %0.0f calories/day less.",
+		    myTarget, unitString, targetYear, targetMonth, targetDay, calsPerDay);
+	} else {
+	  int tTargetMonth, tTargetDay;
+
+	  tTargetMonth = targetMonth; tTargetDay = targetDay;
+	  if (monthFirst == 0) {
+	    int temp;
+	    
+	    temp = tTargetDay;
+	    tTargetDay = tTargetMonth;
+	    tTargetMonth = temp;
+	  }
+	  if (calsPerDay < 0.0)
+	    sprintf(scratchString, "To reach %0.0f %s by %02d/%02d/%4d eat %0.0f calories/day more.",
+		    myTarget, unitString, tTargetMonth, tTargetDay, targetYear, -calsPerDay);
+	  else
+	    sprintf(scratchString, "To reach %0.0f %s by %02d/%02d/%4d eat %0.0f calories/day less.",
+		    myTarget, unitString, tTargetMonth, tTargetDay, targetYear, calsPerDay);
+	}
+      }
+      if (calculateGoalDate(&goalJD, &goalYear, &goalMonth, &goalDay, &goalHour, &goalMinute, NULL, NULL, NULL))
+	y = displayHeight-51;
+      else
+	y = displayHeight-18;
+      renderPangoText(scratchString, OR_WHITE, MEDIUM_PANGO_FONT,
+		      &tWidth, &tHeight, pixmap, displayWidth/2, y, 0.0, TRUE, 0, OR_BLACK);
+      renderPangoText(scratchString, OR_WHITE, MEDIUM_PANGO_FONT,
+		      &tWidth, &tHeight, pixmap, displayWidth/2, y, 0.0, TRUE, 0, OR_BLACK);
+    }
     if (calculateGoalDate(&goalJD, &goalYear, &goalMonth, &goalDay, &goalHour, &goalMinute, NULL, NULL, NULL)) {
       if (goalJD < lastEntry->time)
-	sprintf(scratchString, "You will never reach your target weight");
+	sprintf(scratchString, "The fit indicates you won't reach your target weight; you have passed it.");
       else {
 	if (monthFirst == 2) {
-	  sprintf(scratchString, "You will reach your target weight at %02d:%02d on %d-%02d-%02d",
+	  sprintf(scratchString, "You will reach your target weight at %02d:%02d on %d-%02d-%02d.",
 		  goalHour, goalMinute, goalYear, goalMonth, goalDay);
 	} else {
 	  if (monthFirst == 0) {
@@ -2496,7 +2621,7 @@ void trendButtonClicked(GtkButton *button, gpointer userData)
 	    goalDay = goalMonth;
 	    goalMonth = temp;
 	  }
-	  sprintf(scratchString, "You will reach your target weight at %02d:%02d on %d/%d/%d",
+	  sprintf(scratchString, "You will reach your target weight at %02d:%02d on %d/%d/%d.",
 		  goalHour, goalMinute, goalMonth, goalDay, goalYear);
 	}
       }
@@ -2533,32 +2658,108 @@ void writeSettings(void)
   fprintf(settings, "SHOW_TARGET %d\n",           showTarget);
   fprintf(settings, "PLOT_INTERVAL %d\n",         plotInterval);
   fprintf(settings, "FIT_INTERVAL %d\n",          fitInterval);
+  fprintf(settings, "FIT_TYPE %d\n",              fitType);
   fprintf(settings, "LOSING_WEIGHT_IS_GOOD %d\n", losingWeightIsGood);
   fprintf(settings, "START_WITH_DATA_ENTRY %d\n", startWithDataEntry);
   fprintf(settings, "PLOT_TREND_LINE %d\n",       plotTrendLine);
-  fprintf(settings, "FIT_WINDOW %d\n",            fitWindow);
+  fprintf(settings, "PLOT_DATA_POINTS %d\n",      plotDataPoints);
+  fprintf(settings, "PLOT_WINDOW %d\n",           plotWindow);
   fprintf(settings, "FIT_DAY %d\n",               fitDay);
   fprintf(settings, "FIT_MONTH %d\n",             fitMonth);
   fprintf(settings, "FIT_YEAR %d\n",              fitYear);
+  fprintf(settings, "PLOT_START_DAY %d\n",        plotStartDay);
+  fprintf(settings, "PLOT_START_MONTH %d\n",      plotStartMonth);
+  fprintf(settings, "PLOT_START_YEAR %d\n",       plotStartYear);
+  fprintf(settings, "PLOT_END_DAY %d\n",          plotEndDay);
+  fprintf(settings, "PLOT_END_MONTH %d\n",        plotEndMonth);
+  fprintf(settings, "PLOT_END_YEAR %d\n",         plotEndYear);
+  fprintf(settings, "PLOT_FROM_FIRST %d\n",       plotFromFirst);
+  fprintf(settings, "PLOT_TO_LAST %d\n",          plotToLast);
+  fprintf(settings, "HAVE_GOAL_DATE %d\n",        haveGoalDate);
+  fprintf(settings, "TARGET_DAY %d\n",            targetDay);
+  fprintf(settings, "TARGET_MONTH %d\n",          targetMonth);
+  fprintf(settings, "TARGET_YEAR %d\n",           targetYear);
   fclose(settings);
 } /* End of  W R I T E  S E T T I N G S */
 
 /*
-  C H E C K  S E T T I N G S
+  C H E C K  F I T  S E T T I N G S  S E T T I N G S
 
-  Read the widgets from the Settings page, and set the user-selectable
+  Read the widgets from the Fit Settings page, and set the user-selectable
   variables.
 */
-void checkSettings(void)
+void checkFitSettings(void)
 {
-  dprintf("In checkSettings\n");
-  myHeight = gtk_spin_button_get_value((GtkSpinButton *)heightSpin);
-  myTarget = gtk_spin_button_get_value((GtkSpinButton *)targetSpin);
-
-  if (GTK_TOGGLE_BUTTON(losingWeightIsGoodButton)->active)
-    losingWeightIsGood = TRUE;
+  fitType = FIT_WINDOW;
+  if (GTK_TOGGLE_BUTTON(fitFromButton)->active) {
+    fitInterval = -1;
+    fitType = FIT_FROM_DATE;
+  } else if (GTK_TOGGLE_BUTTON(fitNothingButton)->active) {
+    fitInterval = -1;
+    fitType = DO_NOT_FIT_DATA;
+  } else if (GTK_TOGGLE_BUTTON(fitMonthButton)->active)
+    fitInterval = 30;
+  else if (GTK_TOGGLE_BUTTON(fitQuarterButton)->active)
+    fitInterval = 91;
+  else if (GTK_TOGGLE_BUTTON(fit6MonthButton)->active)
+    fitInterval =183;
+  else if (GTK_TOGGLE_BUTTON(fitYearButton)->active)
+    fitInterval = 365;
   else
-    losingWeightIsGood = FALSE;
+    fitInterval = 1000000000;
+
+  writeSettings();
+  redrawScreen();
+} /* End of  C H E C K  F I T  S E T T I N G S  */
+
+/*
+  C H E C K  P L O T  S E T T I N G S  S E T T I N G S
+
+  Read the widgets from the Plot Settings page, and set the user-selectable
+  variables.
+*/
+void checkPlotSettings(void)
+{
+  if (GTK_TOGGLE_BUTTON(showTargetButton)->active)
+    showTarget = TRUE;
+  else
+    showTarget = FALSE;
+
+  if (GTK_TOGGLE_BUTTON(showCommentsButton)->active)
+    showComments = TRUE;
+  else
+    showComments = FALSE;
+
+  if (GTK_TOGGLE_BUTTON(nonjudgementalButton)->active) {
+    nonjudgementalColors = TRUE;
+    goodColor = badColor = OR_BLUE;
+  } else {
+    nonjudgementalColors = FALSE;
+    if (losingWeightIsGood) {
+      goodColor = OR_GREEN;
+      badColor = OR_RED;
+    } else {
+      goodColor = OR_RED;
+      badColor = OR_GREEN;
+    }
+  }
+
+  if (GTK_TOGGLE_BUTTON(plotTrendLineButton)->active)
+    plotTrendLine = TRUE;
+  else
+    plotTrendLine = FALSE;
+
+  if (GTK_TOGGLE_BUTTON(plotDataPointsButton)->active)
+    plotDataPoints = TRUE;
+  else
+    plotDataPoints = FALSE;
+
+  if (GTK_TOGGLE_BUTTON(monthButton)->active)
+    monthFirst = 1;
+  else if (GTK_TOGGLE_BUTTON(iSOButton)->active)
+    monthFirst = 2;
+  else
+    monthFirst = 0;
 
   if (GTK_TOGGLE_BUTTON(plotFortnightButton)->active)
     plotInterval = 14;
@@ -2573,28 +2774,35 @@ void checkSettings(void)
   else
     plotInterval = 1000000000;
 
-  if (GTK_TOGGLE_BUTTON(fitNothingButton)->active)
-    fitInterval = -1;
-  else if (GTK_TOGGLE_BUTTON(fitMonthButton)->active)
-    fitInterval = 30;
-  else if (GTK_TOGGLE_BUTTON(fitQuarterButton)->active)
-    fitInterval = 91;
-  else if (GTK_TOGGLE_BUTTON(fit6MonthButton)->active)
-    fitInterval =183;
-  else if (GTK_TOGGLE_BUTTON(fitYearButton)->active)
-    fitInterval = 365;
-  else
-    fitInterval = 1000000000;
+  writeSettings();
+  redrawScreen();
+} /* End of  C H E C K  P L O T  S E T T I N G S  */
 
-  if (GTK_TOGGLE_BUTTON(kgButton)->active)
-    weightkg = TRUE;
+/*
+  C H E C K  A B O U T  Y O U
+
+  Read the widgets from the About You page, and set the user-selectable
+  variables.
+*/
+void checkAboutYou(void)
+{
+  guint year, month, day;
+  
+  dprintf("In checkAboutYou\n");
+  myHeight = gtk_spin_button_get_value((GtkSpinButton *)heightSpin);
+  hildon_date_button_get_date((HildonDateButton *)goalDateButton, &year, &month, &day);
+  targetYear = (int)year; targetMonth = (int)month + 1; targetDay = (int)day;
+  dprintf("Got goal date %d/%d/%d\n", targetMonth, targetDay, targetYear);
+
+  myTarget = gtk_spin_button_get_value((GtkSpinButton *)targetSpin);
+  if (GTK_TOGGLE_BUTTON(losingWeightIsGoodButton)->active)
+    losingWeightIsGood = TRUE;
   else
-    weightkg = FALSE;
-  if (GTK_TOGGLE_BUTTON(nonjudgementalButton)->active) {
-    nonjudgementalColors = TRUE;
+    losingWeightIsGood = FALSE;
+  
+  if (nonjudgementalColors) {
     goodColor = badColor = OR_BLUE;
   } else {
-    nonjudgementalColors = FALSE;
     if (losingWeightIsGood) {
       goodColor = OR_GREEN;
       badColor = OR_RED;
@@ -2603,6 +2811,10 @@ void checkSettings(void)
       badColor = OR_GREEN;
     }
   }
+  if (GTK_TOGGLE_BUTTON(kgButton)->active)
+    weightkg = TRUE;
+  else
+    weightkg = FALSE;
   if (GTK_TOGGLE_BUTTON(hackerDietButton)->active)
     hackerDietMode = TRUE;
   else
@@ -2611,31 +2823,13 @@ void checkSettings(void)
     startWithDataEntry = TRUE;
   else
     startWithDataEntry = FALSE;
-  if (GTK_TOGGLE_BUTTON(showCommentsButton)->active)
-    showComments = TRUE;
-  else
-    showComments = FALSE;
-  if (GTK_TOGGLE_BUTTON(plotTrendLineButton)->active)
-    plotTrendLine = TRUE;
-  else
-    plotTrendLine = FALSE;
-  if (GTK_TOGGLE_BUTTON(showTargetButton)->active)
-    showTarget = TRUE;
-  else
-    showTarget = FALSE;
   if (GTK_TOGGLE_BUTTON(cmButton)->active)
     heightcm = TRUE;
   else
     heightcm = FALSE;
-  if (GTK_TOGGLE_BUTTON(monthButton)->active)
-    monthFirst = 1;
-  else if (GTK_TOGGLE_BUTTON(iSOButton)->active)
-    monthFirst = 2;
-  else
-    monthFirst = 0;
   writeSettings();
   redrawScreen();
-} /* End of  C H E C K  S E T T I N G S */
+} /* End of  C H E C K  A B O U T  Y O U  */
 
 /*
   I  E  P A G E  D E S T R O Y E D
@@ -3065,22 +3259,63 @@ void iEExportCallback(void)
 } /* End of  I  E  E X P O R T  C A L L B A C K */
 
 /*
+  S E T  P L O T  S E N S I T I V I T I E S
+  
+ This routine is called to set the button sensitivities for the buttons on the
+ Plot Settings page which select the time range for the main data plot.
+*/
+void setPlotSensitivities(void)
+{
+  if (!plotWindow && !plotFromFirst)
+    gtk_widget_set_sensitive(plotStartButton,    TRUE);
+  else
+    gtk_widget_set_sensitive(plotStartButton,    FALSE);
+  if (!plotWindow && !plotToLast)
+    gtk_widget_set_sensitive(plotEndButton,      TRUE);
+  else
+    gtk_widget_set_sensitive(plotEndButton,      FALSE);
+  gtk_widget_set_sensitive(plotFromFirstButton, !plotWindow);
+  gtk_widget_set_sensitive(plotToLastButton,    !plotWindow);
+  gtk_widget_set_sensitive(plotFortnightButton,  plotWindow);
+  gtk_widget_set_sensitive(plotMonthButton,      plotWindow);
+  gtk_widget_set_sensitive(plotQuarterButton,    plotWindow);
+  gtk_widget_set_sensitive(plot6MonthButton,     plotWindow);
+  gtk_widget_set_sensitive(plotYearButton,       plotWindow);
+  gtk_widget_set_sensitive(plotHistoryButton,    plotWindow);
+} /* End of  S E T  P L O T  S E N S I T I V I T I E S */
+
+/*
   S E T  F I T  S E N S I T I V I T I E S
   
  This routine is called to set the button sensitivities for the buttons on the
- settings page which select the time range for the linear least squares fit
+ Fit Settings page which select the time range for the linear least squares fit
  to the weight data.
 */
 void setFitSensitivities(void)
 {
-  gtk_widget_set_sensitive(fitDateButton,    !fitWindow);
-  gtk_widget_set_sensitive(fitNothingButton,  fitWindow);
-  gtk_widget_set_sensitive(fitMonthButton,    fitWindow);
-  gtk_widget_set_sensitive(fitQuarterButton,  fitWindow);
-  gtk_widget_set_sensitive(fit6MonthButton,   fitWindow);
-  gtk_widget_set_sensitive(fitYearButton,     fitWindow);
-  gtk_widget_set_sensitive(fitHistoryButton,  fitWindow);
+  gtk_widget_set_sensitive(fitWindowButton,        TRUE);
+  gtk_widget_set_sensitive(fitFromButton,          TRUE);
+  gtk_widget_set_sensitive(fitNothingButton,       TRUE);
+  gtk_widget_set_sensitive(fitDateButton,     fitType == FIT_FROM_DATE);
+  gtk_widget_set_sensitive(fitMonthButton,    fitType == FIT_WINDOW);
+  gtk_widget_set_sensitive(fitQuarterButton,  fitType == FIT_WINDOW);
+  gtk_widget_set_sensitive(fit6MonthButton,   fitType == FIT_WINDOW);
+  gtk_widget_set_sensitive(fitYearButton,     fitType == FIT_WINDOW);
+  gtk_widget_set_sensitive(fitHistoryButton,  fitType == FIT_WINDOW);
 } /* End of  S E T  F I T  S E N S I T I V I T I E S */
+
+/*
+  S E T  G O A L  S E N S I T I V I T I E S
+  
+ This routine is called to set the button sensitivities for the buttons on the
+ goal settings page.
+*/
+void setGoalSensitivities(void)
+{
+  haveGoalDate = GTK_TOGGLE_BUTTON(setGoalDateButton)->active;
+  gtk_widget_set_sensitive(goalDateButton, haveGoalDate);
+  writeSettings();
+} /* End of  S E T  G O A L  S E N S I T I V I T I E S */
 
 /*
   S E T  I  E  S E N S I T I V I T I E S
@@ -3126,14 +3361,55 @@ void iECustomFormatButtonCallback(void)
 
 void fitWindowButtonCallback(void)
 {
-  fitWindow = TRUE;
+  fitType = FIT_WINDOW;
   setFitSensitivities();
+}
+
+void fitNothingButtonCallback(void)
+{
+  fitType = DO_NOT_FIT_DATA;
+  setFitSensitivities();
+}
+
+void plotWindowButtonCallback(void)
+{
+  plotWindow = TRUE;
+  setPlotSensitivities();
+}
+
+void setGoalDateButtonCallback(void)
+{
+  setGoalSensitivities();
 }
 
 void fitFromButtonCallback(void)
 {
-  fitWindow = FALSE;
+  fitType = FIT_FROM_DATE;
   setFitSensitivities();
+}
+
+void plotFromButtonCallback(void)
+{
+  plotWindow = FALSE;
+  setPlotSensitivities();
+}
+
+void plotFromFirstButtonCallback(void)
+{
+  if (GTK_TOGGLE_BUTTON(plotFromFirstButton)->active)
+    plotFromFirst = TRUE;
+  else
+    plotFromFirst = FALSE;
+  setPlotSensitivities();
+}
+
+void plotToLastButtonCallback(void)
+{
+  if (GTK_TOGGLE_BUTTON(plotToLastButton)->active)
+    plotToLast = TRUE;
+  else
+    plotToLast = FALSE;
+  setPlotSensitivities();
 }
 
 /*
@@ -3270,6 +3546,100 @@ void iEButtonClicked(GtkButton *button, gpointer userData)
   gtk_widget_show_all(iEStackable);
 } /* End of  I  E  B U T T O N  C L I C K E D */
 
+void goalDateButtonCallback(void)
+{
+  dprintf("I'm in goalDateButtonCallback()\n");
+  writeSettings();
+}
+
+void plotStartButtonCallback(void)
+{
+  static int ignore = FALSE;
+  guint year, month, day;
+
+  if (ignore) {
+    dprintf("Ignoring one call to plotStartButtonCallback\n");
+    ignore = FALSE;
+  } else {
+    dprintf("I'm in plotStartButtonCallback()\n");
+    hildon_date_button_get_date((HildonDateButton *)plotStartButton, &year, &month, &day);
+    if (logRoot == NULL) {
+      hildon_banner_show_information(drawingArea, "ignored", "Please enter some data before plotting");
+    } else {
+      if (calculateJulianDate((int)year, (int)month, (int)day) < (int)logRoot->time) {
+	int firstDay, firstMonth, firstYear;
+	char message[200];
+	
+	tJDToDate(logRoot->time, &firstYear, &firstMonth, &firstDay);
+	sprintf(message, "Plot start date set to first entry date (%d/%d/%d)",
+		firstMonth, firstDay, firstYear);
+	hildon_banner_show_information(drawingArea, "ignored", message);
+	plotStartYear = firstYear; plotStartMonth = firstMonth; plotStartDay = firstDay;
+	ignore = TRUE;
+	hildon_date_button_set_date((HildonDateButton *)plotStartButton, plotStartYear, plotStartMonth-1, plotStartDay);
+      } else if (calculateJulianDate((int)year, (int)month, (int)day) > (int)lastEntry->time) {
+	int lastDay, lastMonth, lastYear;
+	char message[200];
+	
+	tJDToDate(lastEntry->time, &lastYear, &lastMonth, &lastDay);
+	sprintf(message, "Plot start date set to last entry date (%d/%d/%d)",
+		lastMonth, lastDay, lastYear);
+	hildon_banner_show_information(drawingArea, "ignored", message);
+	plotStartYear = lastYear; plotStartMonth = lastMonth; plotStartDay = lastDay;
+	ignore = TRUE;
+	hildon_date_button_set_date((HildonDateButton *)plotStartButton, plotStartYear, plotStartMonth-1, plotStartDay);
+      } else {
+	plotStartYear = (int)year; plotStartMonth = (int)month + 1; plotStartDay = (int)day;
+	dprintf("Got plot start date %d/%d/%d\n", plotStartMonth, plotStartDay, plotStartYear);
+      }
+    }
+  }
+}
+
+void plotEndButtonCallback(void)
+{
+  static int ignore = FALSE;
+  guint year, month, day;
+
+  if (ignore) {
+    dprintf("Ignoring one call to plotEndButtonCallback\n");
+    ignore = FALSE;
+  } else {
+    dprintf("I'm in plotEndButtonCallback()\n");
+    hildon_date_button_get_date((HildonDateButton *)plotEndButton, &year, &month, &day);
+    if (logRoot == NULL) {
+      hildon_banner_show_information(drawingArea, "ignored", "Please enter some data before plotting");
+    } else {
+      if (calculateJulianDate((int)year, (int)month, (int)day) < (int)logRoot->time) {
+	int firstDay, firstMonth, firstYear;
+	char message[200];
+	
+	tJDToDate(logRoot->time, &firstYear, &firstMonth, &firstDay);
+	sprintf(message, "Plot start date set to first entry date (%d/%d/%d)",
+		firstMonth, firstDay, firstYear);
+	hildon_banner_show_information(drawingArea, "ignored", message);
+	plotEndYear = firstYear; plotEndMonth = firstMonth; plotEndDay = firstDay;
+	ignore = TRUE;
+	hildon_date_button_set_date((HildonDateButton *)plotEndButton, plotEndYear, plotEndMonth-1, plotEndDay);
+      } else if (calculateJulianDate((int)year, (int)month, (int)day) > (int)lastEntry->time) {
+	int lastDay, lastMonth, lastYear;
+	char message[200];
+	
+	tJDToDate(lastEntry->time, &lastYear, &lastMonth, &lastDay);
+	sprintf(message, "Plot start date set to last entry date (%d/%d/%d)",
+		lastMonth, lastDay, lastYear);
+	hildon_banner_show_information(drawingArea, "ignored", message);
+	plotEndYear = lastYear; plotEndMonth = lastMonth; plotEndDay = lastDay;
+	ignore = TRUE;
+	hildon_date_button_set_date((HildonDateButton *)plotEndButton, plotEndYear, plotEndMonth-1, plotEndDay);
+      } else {
+	plotEndYear = (int)year; plotEndMonth = (int)month + 1; plotEndDay = (int)day;
+	dprintf("Got plot start date %d/%d/%d\n", plotEndMonth, plotEndDay, plotEndYear);
+      }
+    }
+  }
+}
+
 void fitDateButtonCallback(void)
 {
   static int ignore = FALSE;
@@ -3315,73 +3685,34 @@ void fitDateButtonCallback(void)
 }
 
 /*
-  S E T T I N G S  B U T T O N  C L I C K E D
+  P L O T  S E T T I N G S  B U T T O N  C L I C K E D
 
-  This function builds and displays the widgets for the Settings page.
+  This function builds and displays the widgets for the Plot Settings
+  page.
  */
-void settingsButtonClicked(GtkButton *button, gpointer userData)
+void plotSettingsButtonClicked(GtkButton *button, gpointer userData)
 {
-  static GtkWidget *settingsTable, /* *zerothSeparator, *firstSeparator, */ *secondSeparator,
-    *thirdSeparator;
-  static GSList *weightGroup, *heightGroup, *dateGroup, *plotGroup, *judgementGroup,
-    *fitGroup, *fitChoiceGroup;
-  static GtkObject *heightAdjustment, *targetAdjustment;
+  static GtkWidget *plotSettingsTable, *firstSeparator, *secondSeparator,
+    *thirdSeparator, *fourthSeparator;
+  static GSList *dateGroup, *plotGroup, *intervalGroup;
+  
+  dprintf("in plotSettingsClicked()\n");
+  plotSettingsTable = gtk_table_new(9, 17, FALSE);
 
-  dprintf("in settingsButtonClicked()\n");
-  settingsTable = gtk_table_new(9, 17, FALSE);
-
-  heightUnitLabel = gtk_label_new("Your Height");
-  gtk_table_attach(GTK_TABLE(settingsTable), (GtkWidget *)heightUnitLabel, 0, 2, 0, 1,
-		   GTK_EXPAND | GTK_FILL, GTK_FILL, 0, 0);
-  inButton = gtk_radio_button_new_with_label(NULL, "in");
-  heightGroup = gtk_radio_button_group(GTK_RADIO_BUTTON(inButton));
-  cmButton = gtk_radio_button_new_with_label(heightGroup, "cm");
-  heightGroup = gtk_radio_button_group(GTK_RADIO_BUTTON(cmButton));
-  if (heightcm)
-    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(cmButton), TRUE);
-  else
-    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(inButton), TRUE);
-  gtk_table_attach(GTK_TABLE(settingsTable), (GtkWidget *)inButton, 4, 6, 0, 1,
-		   GTK_EXPAND | GTK_FILL, GTK_FILL, 0, 0);
-  gtk_table_attach(GTK_TABLE(settingsTable), (GtkWidget *)cmButton, 6, 8, 0, 1,
-		   GTK_EXPAND | GTK_FILL, GTK_FILL, 0, 0);
-
-  heightAdjustment = gtk_adjustment_new(myHeight, 10.0, 216.0, 0.5, 1.0, 0.0);
-  heightSpin = gtk_spin_button_new((GtkAdjustment *)heightAdjustment, 0.5, 1);
-  gtk_spin_button_set_numeric((GtkSpinButton *)heightSpin, TRUE);
-  gtk_table_attach(GTK_TABLE(settingsTable), (GtkWidget *)heightSpin, 2, 4, 0, 1,
-		   GTK_EXPAND | GTK_FILL, GTK_FILL, 0, 0);
-
-  weightUnitLabel = gtk_label_new("Weight Unit");
-  gtk_table_attach(GTK_TABLE(settingsTable), (GtkWidget *)weightUnitLabel, 0, 2, 1, 2,
-		   GTK_EXPAND | GTK_FILL, GTK_FILL, 0, 0);
-  poundsButton = gtk_radio_button_new_with_label(NULL, "lbs");
-  weightGroup = gtk_radio_button_group(GTK_RADIO_BUTTON(poundsButton));
-  kgButton = gtk_radio_button_new_with_label(weightGroup, "kg");
-  weightGroup = gtk_radio_button_group(GTK_RADIO_BUTTON(kgButton));
-  if (weightkg)
-    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(kgButton), TRUE);
-  else
-    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(poundsButton), TRUE);
-  gtk_table_attach(GTK_TABLE(settingsTable), (GtkWidget *)poundsButton, 2, 4, 1, 2,
-		   GTK_EXPAND | GTK_FILL, GTK_FILL, 0, 0);
-  gtk_table_attach(GTK_TABLE(settingsTable), (GtkWidget *)kgButton, 4, 6, 1, 2,
-		   GTK_EXPAND | GTK_FILL, GTK_FILL, 0, 0);
-
-  targetSpinLabel = gtk_label_new("Target Weight");
-  gtk_table_attach(GTK_TABLE(settingsTable), (GtkWidget *)targetSpinLabel, 0, 2, 2, 3,
-		   GTK_EXPAND | GTK_FILL, GTK_FILL, 0, 0);
-  targetAdjustment = gtk_adjustment_new(myTarget, 60.0, 250.0, 0.5, 1.0, 0.0);
-  targetSpin = gtk_spin_button_new((GtkAdjustment *)targetAdjustment, 0.5, 1);
-  gtk_spin_button_set_numeric((GtkSpinButton *)targetSpin, TRUE);
-  gtk_table_attach(GTK_TABLE(settingsTable), (GtkWidget *)targetSpin, 2, 4, 2, 3,
-		   GTK_EXPAND | GTK_FILL, GTK_FILL, 0, 0);
   showTargetButton = gtk_check_button_new_with_label("Plot Target Weight");
   if (showTarget)
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(showTargetButton), TRUE);
   else
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(showTargetButton), FALSE);
-  gtk_table_attach(GTK_TABLE(settingsTable), showTargetButton, 4, 8, 2, 3,
+  gtk_table_attach(GTK_TABLE(plotSettingsTable), showTargetButton, 0, 3, 0, 1,
+		   GTK_EXPAND | GTK_FILL, GTK_FILL, 0, 0);
+
+  showCommentsButton = gtk_check_button_new_with_label("Plot Comments");
+  if (showComments)
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(showCommentsButton), TRUE);
+  else
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(showCommentsButton), FALSE);
+  gtk_table_attach(GTK_TABLE(plotSettingsTable), showCommentsButton, 4, 7, 0, 1,
 		   GTK_EXPAND | GTK_FILL, GTK_FILL, 0, 0);
 
   nonjudgementalButton = gtk_check_button_new_with_label("Nonjudgemental Colors");
@@ -3389,65 +3720,29 @@ void settingsButtonClicked(GtkButton *button, gpointer userData)
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(nonjudgementalButton), TRUE);
   else
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(nonjudgementalButton), FALSE);
-  gtk_table_attach(GTK_TABLE(settingsTable), nonjudgementalButton, 0, 3, 3, 4,
-		   GTK_EXPAND | GTK_FILL, GTK_FILL, 0, 0);
-  hackerDietButton = gtk_check_button_new_with_label("Hacker Diet Mode");
-  if (hackerDietMode)
-    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(hackerDietButton), TRUE);
-  else
-    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(hackerDietButton), FALSE);
-  gtk_table_attach(GTK_TABLE(settingsTable), hackerDietButton, 4, 7, 3, 4,
-		   GTK_EXPAND | GTK_FILL, GTK_FILL, 0, 0);
-  showCommentsButton = gtk_check_button_new_with_label("Plot Comments");
-  if (showComments)
-    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(showCommentsButton), TRUE);
-  else
-    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(showCommentsButton), FALSE);
-  gtk_table_attach(GTK_TABLE(settingsTable), showCommentsButton, 8, 12, 3, 4,
+  gtk_table_attach(GTK_TABLE(plotSettingsTable), nonjudgementalButton, 0, 3, 1, 2,
 		   GTK_EXPAND | GTK_FILL, GTK_FILL, 0, 0);
 
-  sWDEButton = gtk_check_button_new_with_label("Start with Data Entry");
-  if (startWithDataEntry)
-    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(sWDEButton), TRUE);
-  else
-    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(sWDEButton), FALSE);
-  gtk_table_attach(GTK_TABLE(settingsTable), sWDEButton, 0, 3, 4, 5,
-		   GTK_EXPAND | GTK_FILL, GTK_FILL, 0, 0);
   plotTrendLineButton = gtk_check_button_new_with_label("Plot Trend Line");
   if (plotTrendLine)
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(plotTrendLineButton), TRUE);
   else
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(plotTrendLineButton), FALSE);
-  gtk_table_attach(GTK_TABLE(settingsTable), plotTrendLineButton, 8, 12, 4, 5,
+  gtk_table_attach(GTK_TABLE(plotSettingsTable), plotTrendLineButton, 4, 7, 1, 2,
 		   GTK_EXPAND | GTK_FILL, GTK_FILL, 0, 0);
 
-  /*
-  zerothSeparator = gtk_separator_menu_item_new();
-  gtk_table_attach(GTK_TABLE(settingsTable), zerothSeparator, 0, 12, 5, 6,
-		   GTK_EXPAND | GTK_FILL, GTK_FILL, 0, 0);
-  */
-
-  /* Set up a radio box button group to select whether gaining or losing weight is good */
-  goalLabel = gtk_label_new("Weight Goal:");
-  gtk_table_attach(GTK_TABLE(settingsTable), (GtkWidget *)goalLabel, 0, 3, 6, 7,
-		   GTK_EXPAND | GTK_FILL, GTK_FILL, 0, 0);
-  losingWeightIsGoodButton = gtk_radio_button_new_with_label(NULL, "Losing Weight");
-  judgementGroup = gtk_radio_button_group(GTK_RADIO_BUTTON(losingWeightIsGoodButton));
-  gainingWeightIsGoodButton = gtk_radio_button_new_with_label(judgementGroup, "Gaining Weight");
-  judgementGroup = gtk_radio_button_group(GTK_RADIO_BUTTON(gainingWeightIsGoodButton));
-  if (losingWeightIsGood)
-    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(losingWeightIsGoodButton), TRUE);
+  plotDataPointsButton = gtk_check_button_new_with_label("Plot Data Points");
+  if (plotDataPoints)
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(plotDataPointsButton), TRUE);
   else
-    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(gainingWeightIsGoodButton), TRUE);
-  gtk_table_attach(GTK_TABLE(settingsTable), losingWeightIsGoodButton, 4, 7, 6, 7,
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(plotDataPointsButton), FALSE);
+  gtk_table_attach(GTK_TABLE(plotSettingsTable), plotDataPointsButton, 8, 11, 1, 2,
 		   GTK_EXPAND | GTK_FILL, GTK_FILL, 0, 0);
-  gtk_table_attach(GTK_TABLE(settingsTable), gainingWeightIsGoodButton, 8, 12, 6, 7,
-		   GTK_EXPAND | GTK_FILL, GTK_FILL, 0, 0);
-  /*
+
   firstSeparator = gtk_separator_menu_item_new();
-  gtk_table_attach(GTK_TABLE(settingsTable), firstSeparator, 0, 12, 7, 8,
+  gtk_table_attach(GTK_TABLE(plotSettingsTable), firstSeparator, 0, 12, 2, 3,
 		   GTK_EXPAND | GTK_FILL, GTK_FILL, 0, 0);
-  */
+
   dayButton = gtk_radio_button_new_with_label(NULL, "dd/mm/yyyy");
   dateGroup = gtk_radio_button_group(GTK_RADIO_BUTTON(dayButton));
   monthButton = gtk_radio_button_new_with_label(dateGroup, "mm/dd/yyyy");
@@ -3464,18 +3759,24 @@ void settingsButtonClicked(GtkButton *button, gpointer userData)
   default:
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(dayButton), TRUE);
   }
-  gtk_table_attach(GTK_TABLE(settingsTable), (GtkWidget *)dayButton, 0, 3, 8, 9,
+  gtk_table_attach(GTK_TABLE(plotSettingsTable), (GtkWidget *)dayButton, 0, 3, 3, 4,
 		   GTK_EXPAND | GTK_FILL, GTK_FILL, 0, 0);
-  gtk_table_attach(GTK_TABLE(settingsTable), (GtkWidget *)monthButton, 4, 7, 8, 9,
+  gtk_table_attach(GTK_TABLE(plotSettingsTable), (GtkWidget *)monthButton, 4, 7, 3, 4,
 		   GTK_EXPAND | GTK_FILL, GTK_FILL, 0, 0);
-  gtk_table_attach(GTK_TABLE(settingsTable), (GtkWidget *)iSOButton, 8, 12, 8, 9,
+  gtk_table_attach(GTK_TABLE(plotSettingsTable), (GtkWidget *)iSOButton, 8, 12, 3, 4,
 		   GTK_EXPAND | GTK_FILL, GTK_FILL, 0, 0);
 
-  thirdSeparator = gtk_separator_menu_item_new();
-  gtk_table_attach(GTK_TABLE(settingsTable), thirdSeparator, 0, 12, 9, 10,
+  secondSeparator = gtk_separator_menu_item_new();
+  gtk_table_attach(GTK_TABLE(plotSettingsTable), secondSeparator, 0, 12, 4, 5,
 		   GTK_EXPAND | GTK_FILL, GTK_FILL, 0, 0);
 
   /* Set up a radio box button group to select the plot interval */
+  plotWindowButton = gtk_radio_button_new_with_label(NULL, "Plot Interval");
+  intervalGroup = gtk_radio_button_group(GTK_RADIO_BUTTON(plotWindowButton));
+  g_signal_connect(G_OBJECT(plotWindowButton), "clicked",
+		   G_CALLBACK(plotWindowButtonCallback), NULL);
+  gtk_table_attach(GTK_TABLE(plotSettingsTable), plotWindowButton, 0, 3, 5, 6,
+		   GTK_EXPAND | GTK_FILL, GTK_FILL, 0, 0);
   plotFortnightButton = gtk_radio_button_new_with_label(NULL, "Plot Last Fortnight");
   plotGroup = gtk_radio_button_group(GTK_RADIO_BUTTON(plotFortnightButton));
   plotMonthButton = gtk_radio_button_new_with_label(plotGroup, "Plot Last Month");
@@ -3507,25 +3808,126 @@ void settingsButtonClicked(GtkButton *button, gpointer userData)
   default:
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(plotHistoryButton), TRUE);
   }
-  gtk_table_attach(GTK_TABLE(settingsTable), plotFortnightButton, 0, 3, 10, 11,
+  gtk_table_attach(GTK_TABLE(plotSettingsTable), plotFortnightButton, 0, 3, 6, 7,
 		   GTK_EXPAND | GTK_FILL, GTK_FILL, 0, 0);
-  gtk_table_attach(GTK_TABLE(settingsTable), plotMonthButton, 4, 7, 10, 11,
+  gtk_table_attach(GTK_TABLE(plotSettingsTable), plotMonthButton, 4, 7, 6, 7,
 		   GTK_EXPAND | GTK_FILL, GTK_FILL, 0, 0);
-  gtk_table_attach(GTK_TABLE(settingsTable), plotQuarterButton, 8, 12, 10, 11,
+  gtk_table_attach(GTK_TABLE(plotSettingsTable), plotQuarterButton, 8, 12, 6, 7,
 		   GTK_EXPAND | GTK_FILL, GTK_FILL, 0, 0);
-  gtk_table_attach(GTK_TABLE(settingsTable), plot6MonthButton, 0, 3, 11, 12,
+  gtk_table_attach(GTK_TABLE(plotSettingsTable), plot6MonthButton, 0, 3, 7, 8,
 		   GTK_EXPAND | GTK_FILL, GTK_FILL, 0, 0);
-  gtk_table_attach(GTK_TABLE(settingsTable), plotYearButton, 4, 7, 11, 12,
+  gtk_table_attach(GTK_TABLE(plotSettingsTable), plotYearButton, 4, 7, 7, 8,
 		   GTK_EXPAND | GTK_FILL, GTK_FILL, 0, 0);
-  gtk_table_attach(GTK_TABLE(settingsTable), plotHistoryButton, 8, 12, 11, 12,
+  gtk_table_attach(GTK_TABLE(plotSettingsTable), plotHistoryButton, 8, 12, 7, 8,
 		   GTK_EXPAND | GTK_FILL, GTK_FILL, 0, 0);
 
-  secondSeparator = gtk_separator_menu_item_new();
-  gtk_table_attach(GTK_TABLE(settingsTable), secondSeparator, 0, 12, 12, 13,
+  thirdSeparator = gtk_separator_menu_item_new();
+  gtk_table_attach(GTK_TABLE(plotSettingsTable), thirdSeparator, 0, 12, 8, 9,
 		   GTK_EXPAND | GTK_FILL, GTK_FILL, 0, 0);
+
+  plotFromButton = gtk_radio_button_new_with_label(intervalGroup, "Plot Date Range");
+  intervalGroup = gtk_radio_button_group(GTK_RADIO_BUTTON(plotFromButton));
+  g_signal_connect (G_OBJECT(plotFromButton), "clicked",
+		    G_CALLBACK(plotFromButtonCallback), NULL);
+  gtk_table_attach(GTK_TABLE(plotSettingsTable), plotFromButton, 0, 3, 9, 10,
+		   GTK_EXPAND | GTK_FILL, GTK_FILL, 0, 0);
+
+  plotFromFirstButton = gtk_check_button_new_with_label("From First Entry");
+  if (plotFromFirst)
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(plotFromFirstButton), TRUE);
+  else
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(plotFromFirstButton), FALSE);
+  g_signal_connect (G_OBJECT(plotFromFirstButton), "clicked",
+		    G_CALLBACK(plotFromFirstButtonCallback), NULL);
+  gtk_table_attach(GTK_TABLE(plotSettingsTable), plotFromFirstButton, 4, 7, 10, 11,
+		   GTK_EXPAND | GTK_FILL, GTK_FILL, 0, 0);
+  plotToLastButton = gtk_check_button_new_with_label("To Last Entry");
+  if (plotToLast)
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(plotToLastButton), TRUE);
+  else
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(plotToLastButton), FALSE);
+  g_signal_connect (G_OBJECT(plotToLastButton), "clicked",
+		    G_CALLBACK(plotToLastButtonCallback), NULL);
+  gtk_table_attach(GTK_TABLE(plotSettingsTable), plotToLastButton, 4, 7, 11, 12,
+		   GTK_EXPAND | GTK_FILL, GTK_FILL, 0, 0);
+
+  if (logRoot == NULL) {
+    plotStartButton = hildon_date_button_new(HILDON_SIZE_AUTO, HILDON_BUTTON_ARRANGEMENT_VERTICAL);
+    plotEndButton   = hildon_date_button_new(HILDON_SIZE_AUTO, HILDON_BUTTON_ARRANGEMENT_VERTICAL);
+  } else {
+    int minYear, maxYear, maxMonth, maxDay, minMonth, minDay;
+
+    tJDToDate(logRoot->time,   &minYear, &minMonth, &minDay);
+    tJDToDate(lastEntry->time, &maxYear, &maxMonth, &maxDay);
+    plotStartButton = hildon_date_button_new_with_year_range(HILDON_SIZE_AUTO,
+							     HILDON_BUTTON_ARRANGEMENT_VERTICAL,
+							     minYear, maxYear);
+    plotEndButton   = hildon_date_button_new_with_year_range(HILDON_SIZE_AUTO,
+							     HILDON_BUTTON_ARRANGEMENT_VERTICAL,
+							     minYear, maxYear);
+    if ((plotStartYear >= minYear) && (plotStartYear <= maxYear)
+	&& (plotStartMonth > 0)    && (plotStartMonth < 13)
+	&& (plotStartDay > 0)      && (plotStartDay < 32)) {
+      hildon_date_button_set_date((HildonDateButton *)plotStartButton, plotStartYear, plotStartMonth-1, plotStartDay);
+    } else {
+      dprintf("Trying to set plot start to beginning of data\n");
+      hildon_date_button_set_date((HildonDateButton *)plotStartButton, minYear, minMonth-1, minDay);
+    }
+    if ((plotEndYear >= minYear) && (plotEndYear <= maxYear)
+	&& (plotEndMonth > 0)    && (plotEndMonth < 13)
+	&& (plotEndDay > 0)      && (plotEndDay < 32)) {
+      hildon_date_button_set_date((HildonDateButton *)plotEndButton, plotEndYear, plotEndMonth-1, plotEndDay);
+    } else {
+      dprintf("Trying to set plot end to end of data\n");
+      hildon_date_button_set_date((HildonDateButton *)plotEndButton, maxYear, maxMonth-1, maxDay);
+    }
+  }
+  hildon_button_set_title((HildonButton *)plotStartButton, NULL);
+  g_signal_connect(G_OBJECT(plotStartButton), "value-changed",
+		   G_CALLBACK(plotStartButtonCallback), NULL);
+  gtk_table_attach(GTK_TABLE(plotSettingsTable), plotStartButton, 8, 11, 10, 11,
+		   GTK_EXPAND | GTK_FILL, GTK_FILL, 0, 0);
+  hildon_button_set_title((HildonButton *)plotEndButton, NULL);
+  g_signal_connect(G_OBJECT(plotEndButton), "value-changed",
+		   G_CALLBACK(plotEndButtonCallback), NULL);
+  gtk_table_attach(GTK_TABLE(plotSettingsTable), plotEndButton, 8, 11, 11, 12,
+		   GTK_EXPAND | GTK_FILL, GTK_FILL, 0, 0);
+  if (plotWindow)
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(plotWindowButton), TRUE);
+  else
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(plotFromButton), TRUE);
+
+  fourthSeparator = gtk_separator_menu_item_new();
+  gtk_table_attach(GTK_TABLE(plotSettingsTable), fourthSeparator, 0, 12, 12, 13,
+		   GTK_EXPAND | GTK_FILL, GTK_FILL, 0, 0);
+
+  setPlotSensitivities();
+  plotSettingsStackable = hildon_stackable_window_new();
+  g_signal_connect(G_OBJECT(plotSettingsStackable), "destroy",
+		   G_CALLBACK(checkPlotSettings), NULL);
+  gtk_container_add(GTK_CONTAINER(plotSettingsStackable), plotSettingsTable);
+  gtk_widget_show_all(plotSettingsStackable);
+} /* End of  P L O T  S E T T I N G S  B U T T O N  C L I C K E D  */
+
+/*
+  F I T  S E T T I N G S  B U T T O N  C L I C K E D
+
+  This function builds and displays the widgets for the Goal Settings
+  page.
+ */
+void fitSettingsButtonClicked(GtkButton *button, gpointer userData)
+{
+  static GtkWidget *fitSettingsTable;
+  static GSList *fitGroup, *fitChoiceGroup;
+  
+  fitSettingsTable = gtk_table_new(9, 17, FALSE);
 
   /* Set up a radio box button group to select the least squares fit interval */
-  fitWindowButton = gtk_radio_button_new_with_label(NULL, "Fit Interval");
+  fitNothingButton = gtk_radio_button_new_with_label(NULL, "Don't Fit Data");
+  g_signal_connect (G_OBJECT(fitNothingButton), "clicked",
+		    G_CALLBACK(fitNothingButtonCallback), NULL);
+  fitChoiceGroup = gtk_radio_button_group(GTK_RADIO_BUTTON(fitNothingButton));
+  fitWindowButton = gtk_radio_button_new_with_label(fitChoiceGroup, "Fit Interval");
   g_signal_connect (G_OBJECT(fitWindowButton), "clicked",
 		    G_CALLBACK(fitWindowButtonCallback), NULL);
   fitChoiceGroup = gtk_radio_button_group(GTK_RADIO_BUTTON(fitWindowButton));
@@ -3533,10 +3935,16 @@ void settingsButtonClicked(GtkButton *button, gpointer userData)
   g_signal_connect (G_OBJECT(fitFromButton), "clicked",
 		    G_CALLBACK(fitFromButtonCallback), NULL);
   fitChoiceGroup = gtk_radio_button_group(GTK_RADIO_BUTTON(fitFromButton));
-  if (fitWindow)
+  switch (fitType) {
+  case DO_NOT_FIT_DATA:
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(fitNothingButton), TRUE);
+    break;
+  case FIT_WINDOW:
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(fitWindowButton), TRUE);
-  else
+    break;
+  default:
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(fitFromButton), TRUE);
+  }
   if (logRoot == NULL)
     fitDateButton = hildon_date_button_new(HILDON_SIZE_AUTO, HILDON_BUTTON_ARRANGEMENT_VERTICAL);
   else {
@@ -3558,17 +3966,17 @@ void settingsButtonClicked(GtkButton *button, gpointer userData)
   g_signal_connect(G_OBJECT(fitDateButton), "value-changed",
 		   G_CALLBACK(fitDateButtonCallback), NULL);
 
-  gtk_table_attach(GTK_TABLE(settingsTable), fitWindowButton, 0, 2, 13, 14,
+  gtk_table_attach(GTK_TABLE(fitSettingsTable), fitNothingButton, 0, 2, 0, 1,
 		   GTK_EXPAND | GTK_FILL, GTK_FILL, 0, 0);
-  gtk_table_attach(GTK_TABLE(settingsTable), fitFromButton, 2, 4, 13, 14,
+  gtk_table_attach(GTK_TABLE(fitSettingsTable), fitWindowButton, 2, 4, 0, 1,
+		   GTK_EXPAND | GTK_FILL, GTK_FILL, 0, 0);
+  gtk_table_attach(GTK_TABLE(fitSettingsTable), fitFromButton, 4, 6, 0, 1,
 		   GTK_EXPAND | GTK_FILL, GTK_FILL, 0, 0);
 
-  gtk_table_attach(GTK_TABLE(settingsTable), fitDateButton, 4, 9, 13, 14,
+  gtk_table_attach(GTK_TABLE(fitSettingsTable), fitDateButton, 6, 11, 0, 1,
 		   GTK_EXPAND | GTK_FILL, GTK_FILL, 0, 0);
 
-  fitNothingButton = gtk_radio_button_new_with_label(NULL, "Don't Fit Data");
-  fitGroup = gtk_radio_button_group(GTK_RADIO_BUTTON(fitNothingButton));
-  fitMonthButton = gtk_radio_button_new_with_label(fitGroup, "Fit Last Month");
+  fitMonthButton = gtk_radio_button_new_with_label(NULL, "Fit Last Month");
   fitGroup = gtk_radio_button_group(GTK_RADIO_BUTTON(fitMonthButton));
   fitQuarterButton = gtk_radio_button_new_with_label(fitGroup, "Fit Last Quarter");
   fitGroup = gtk_radio_button_group(GTK_RADIO_BUTTON(fitQuarterButton));
@@ -3580,7 +3988,6 @@ void settingsButtonClicked(GtkButton *button, gpointer userData)
   fitGroup = gtk_radio_button_group(GTK_RADIO_BUTTON(fitHistoryButton));
   switch (fitInterval) {
   case -1:
-    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(fitNothingButton), TRUE);
     break;
   case 30:
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(fitMonthButton), TRUE);
@@ -3597,26 +4004,172 @@ void settingsButtonClicked(GtkButton *button, gpointer userData)
   default:
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(fitHistoryButton), TRUE);
   }
-  gtk_table_attach(GTK_TABLE(settingsTable), fitNothingButton, 0, 3, 14, 15,
+  gtk_table_attach(GTK_TABLE(fitSettingsTable), fitMonthButton, 0, 3, 1, 2,
 		   GTK_EXPAND | GTK_FILL, GTK_FILL, 0, 0);
-  gtk_table_attach(GTK_TABLE(settingsTable), fitMonthButton, 4, 7, 14, 15,
+  gtk_table_attach(GTK_TABLE(fitSettingsTable), fitQuarterButton, 4, 7, 1, 2,
 		   GTK_EXPAND | GTK_FILL, GTK_FILL, 0, 0);
-  gtk_table_attach(GTK_TABLE(settingsTable), fitQuarterButton, 8, 12, 14, 15,
+  gtk_table_attach(GTK_TABLE(fitSettingsTable), fit6MonthButton, 8, 12, 1, 2,
 		   GTK_EXPAND | GTK_FILL, GTK_FILL, 0, 0);
-  gtk_table_attach(GTK_TABLE(settingsTable), fit6MonthButton, 0, 3, 15, 16,
+  gtk_table_attach(GTK_TABLE(fitSettingsTable), fitYearButton, 0, 3, 2, 3,
 		   GTK_EXPAND | GTK_FILL, GTK_FILL, 0, 0);
-  gtk_table_attach(GTK_TABLE(settingsTable), fitYearButton, 4, 7, 15, 16,
-		   GTK_EXPAND | GTK_FILL, GTK_FILL, 0, 0);
-  gtk_table_attach(GTK_TABLE(settingsTable), fitHistoryButton, 8, 12, 15, 16,
+  gtk_table_attach(GTK_TABLE(fitSettingsTable), fitHistoryButton, 4, 7, 2, 3,
 		   GTK_EXPAND | GTK_FILL, GTK_FILL, 0, 0);
   setFitSensitivities();
 
-  settingsStackable = hildon_stackable_window_new();
-  g_signal_connect(G_OBJECT(settingsStackable), "destroy",
-		   G_CALLBACK(checkSettings), NULL);
-  gtk_container_add(GTK_CONTAINER(settingsStackable), settingsTable);
-  gtk_widget_show_all(settingsStackable);
-} /* End of  S E T T I N G S  B U T T O N  C L I C K E D */
+  fitSettingsStackable = hildon_stackable_window_new();
+  g_signal_connect(G_OBJECT(fitSettingsStackable), "destroy",
+		   G_CALLBACK(checkFitSettings), NULL);
+  gtk_container_add(GTK_CONTAINER(fitSettingsStackable), fitSettingsTable);
+  gtk_widget_show_all(fitSettingsStackable);
+} /* End of  F I T  S E T T I N G S  B U T T O N  C L I C K E D  */
+
+/*
+  A B O U T  Y O U  B U T T O N  C L I C K E D
+
+  This function builds and displays the widgets for the AboutYou page.
+ */
+void aboutYouButtonClicked(GtkButton *button, gpointer userData)
+{
+  static GtkWidget *aboutYouTable, *firstSeparator,
+    *secondSeparator;
+  static GSList *weightGroup, *heightGroup, *judgementGroup;
+  static GtkObject *heightAdjustment, *targetAdjustment;
+
+  dprintf("in aboutYouButtonClicked()\n");
+  aboutYouTable = gtk_table_new(9, 17, FALSE);
+
+  heightUnitLabel = gtk_label_new("Your Height");
+  gtk_table_attach(GTK_TABLE(aboutYouTable), (GtkWidget *)heightUnitLabel, 0, 2, 0, 1,
+		   GTK_EXPAND | GTK_FILL, GTK_FILL, 0, 0);
+  inButton = gtk_radio_button_new_with_label(NULL, "in");
+  heightGroup = gtk_radio_button_group(GTK_RADIO_BUTTON(inButton));
+  cmButton = gtk_radio_button_new_with_label(heightGroup, "cm");
+  heightGroup = gtk_radio_button_group(GTK_RADIO_BUTTON(cmButton));
+  if (heightcm)
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(cmButton), TRUE);
+  else
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(inButton), TRUE);
+  gtk_table_attach(GTK_TABLE(aboutYouTable), (GtkWidget *)inButton, 4, 7, 0, 1,
+		   GTK_EXPAND | GTK_FILL, GTK_FILL, 0, 0);
+  gtk_table_attach(GTK_TABLE(aboutYouTable), (GtkWidget *)cmButton, 8, 12, 0, 1,
+		   GTK_EXPAND | GTK_FILL, GTK_FILL, 0, 0);
+
+  heightAdjustment = gtk_adjustment_new(myHeight, 10.0, 216.0, 0.5, 1.0, 0.0);
+  heightSpin = gtk_spin_button_new((GtkAdjustment *)heightAdjustment, 0.5, 1);
+  gtk_spin_button_set_numeric((GtkSpinButton *)heightSpin, TRUE);
+  gtk_table_attach(GTK_TABLE(aboutYouTable), (GtkWidget *)heightSpin, 2, 4, 0, 1,
+		   GTK_EXPAND | GTK_FILL, GTK_FILL, 0, 0);
+
+  weightUnitLabel = gtk_label_new("Weight Unit");
+  gtk_table_attach(GTK_TABLE(aboutYouTable), (GtkWidget *)weightUnitLabel, 0, 2, 1, 2,
+		   GTK_EXPAND | GTK_FILL, GTK_FILL, 0, 0);
+  poundsButton = gtk_radio_button_new_with_label(NULL, "lbs");
+  weightGroup = gtk_radio_button_group(GTK_RADIO_BUTTON(poundsButton));
+  kgButton = gtk_radio_button_new_with_label(weightGroup, "kg");
+  weightGroup = gtk_radio_button_group(GTK_RADIO_BUTTON(kgButton));
+  if (weightkg)
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(kgButton), TRUE);
+  else
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(poundsButton), TRUE);
+  gtk_table_attach(GTK_TABLE(aboutYouTable), (GtkWidget *)poundsButton, 4, 7, 1, 2,
+		   GTK_EXPAND | GTK_FILL, GTK_FILL, 0, 0);
+  gtk_table_attach(GTK_TABLE(aboutYouTable), (GtkWidget *)kgButton, 8, 12, 1, 2,
+		   GTK_EXPAND | GTK_FILL, GTK_FILL, 0, 0);
+
+  /* Set up a radio box button group to select whether gaining or losing weight is good */
+  goalLabel = gtk_label_new("Weight Goal:");
+  gtk_table_attach(GTK_TABLE(aboutYouTable), (GtkWidget *)goalLabel, 0, 2, 2, 3,
+		   GTK_EXPAND | GTK_FILL, GTK_FILL, 0, 0);
+  losingWeightIsGoodButton = gtk_radio_button_new_with_label(NULL, "Losing Weight");
+  judgementGroup = gtk_radio_button_group(GTK_RADIO_BUTTON(losingWeightIsGoodButton));
+  gainingWeightIsGoodButton = gtk_radio_button_new_with_label(judgementGroup, "Gaining Weight");
+  judgementGroup = gtk_radio_button_group(GTK_RADIO_BUTTON(gainingWeightIsGoodButton));
+  if (losingWeightIsGood)
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(losingWeightIsGoodButton), TRUE);
+  else
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(gainingWeightIsGoodButton), TRUE);
+  gtk_table_attach(GTK_TABLE(aboutYouTable), losingWeightIsGoodButton, 4, 7, 2, 3,
+		   GTK_EXPAND | GTK_FILL, GTK_FILL, 0, 0);
+  gtk_table_attach(GTK_TABLE(aboutYouTable), gainingWeightIsGoodButton, 8, 12, 2, 3,
+		   GTK_EXPAND | GTK_FILL, GTK_FILL, 0, 0);
+
+  firstSeparator = gtk_separator_menu_item_new();
+  gtk_table_attach(GTK_TABLE(aboutYouTable), firstSeparator, 0, 12, 3, 4,
+		   GTK_EXPAND | GTK_FILL, GTK_FILL, 0, 0);
+
+  targetSpinLabel = gtk_label_new("Target Weight");
+  gtk_table_attach(GTK_TABLE(aboutYouTable), (GtkWidget *)targetSpinLabel, 0, 2, 4, 5,
+		   GTK_EXPAND | GTK_FILL, GTK_FILL, 0, 0);
+  targetAdjustment = gtk_adjustment_new(myTarget, 60.0, 250.0, 0.5, 1.0, 0.0);
+  targetSpin = gtk_spin_button_new((GtkAdjustment *)targetAdjustment, 0.5, 1);
+  gtk_spin_button_set_numeric((GtkSpinButton *)targetSpin, TRUE);
+  gtk_table_attach(GTK_TABLE(aboutYouTable), (GtkWidget *)targetSpin, 2, 4, 4, 5,
+		   GTK_EXPAND | GTK_FILL, GTK_FILL, 0, 0);
+
+  setGoalDateButton = gtk_check_button_new_with_label("Set Goal Date");
+  g_signal_connect (G_OBJECT(setGoalDateButton), "clicked",
+		    G_CALLBACK(setGoalDateButtonCallback), NULL);
+  if (haveGoalDate)
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(setGoalDateButton), TRUE);
+  else
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(setGoalDateButton), FALSE);
+  if (logRoot == NULL)
+    goalDateButton = hildon_date_button_new(HILDON_SIZE_AUTO, HILDON_BUTTON_ARRANGEMENT_VERTICAL);
+  else {
+    int minYear, maxYear, m, d;
+
+    tJDToDate(logRoot->time,   &minYear, &m, &d);
+    tJDToDate(lastEntry->time, &maxYear, &m, &d);
+    goalDateButton = hildon_date_button_new_with_year_range(HILDON_SIZE_AUTO,
+							    HILDON_BUTTON_ARRANGEMENT_VERTICAL,
+							    minYear, maxYear+5);
+    if ((targetYear >= 1900) && (targetYear <= 3000)
+	&& (targetMonth > 0)    && (targetMonth < 13)
+	&& (targetDay > 0)      && (targetDay < 32)) {
+      hildon_date_button_set_date((HildonDateButton *)goalDateButton, targetYear, targetMonth-1, targetDay);
+    } else
+      dprintf("NOT trying to set the date to %d/%d/%d\n", targetMonth, targetDay, targetYear);
+  }
+  hildon_button_set_title((HildonButton *)goalDateButton, NULL);
+  g_signal_connect(G_OBJECT(goalDateButton), "value-changed",
+		   G_CALLBACK(goalDateButtonCallback), NULL);
+  if (haveGoalDate)
+    gtk_widget_set_sensitive(GTK_TOGGLE_BUTTON(goalDateButton), TRUE);
+  else
+    gtk_widget_set_sensitive(GTK_TOGGLE_BUTTON(goalDateButton), FALSE);
+
+  gtk_table_attach(GTK_TABLE(aboutYouTable), setGoalDateButton, 4, 6, 4, 5,
+		   GTK_EXPAND | GTK_FILL, GTK_FILL, 0, 0);
+  gtk_table_attach(GTK_TABLE(aboutYouTable), goalDateButton, 8, 10, 4, 5,
+		   GTK_EXPAND | GTK_FILL, GTK_FILL, 0, 0);
+
+  secondSeparator = gtk_separator_menu_item_new();
+  gtk_table_attach(GTK_TABLE(aboutYouTable), secondSeparator, 0, 12, 5, 6,
+		   GTK_EXPAND | GTK_FILL, GTK_FILL, 0, 0);
+
+  hackerDietButton = gtk_check_button_new_with_label("Hacker Diet Mode");
+  if (hackerDietMode)
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(hackerDietButton), TRUE);
+  else
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(hackerDietButton), FALSE);
+  gtk_table_attach(GTK_TABLE(aboutYouTable), hackerDietButton, 0, 3, 6, 7,
+		   GTK_EXPAND | GTK_FILL, GTK_FILL, 0, 0);
+
+  sWDEButton = gtk_check_button_new_with_label("Start with Data Entry");
+  if (startWithDataEntry)
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(sWDEButton), TRUE);
+  else
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(sWDEButton), FALSE);
+  gtk_table_attach(GTK_TABLE(aboutYouTable), sWDEButton, 4, 7, 6, 7,
+		   GTK_EXPAND | GTK_FILL, GTK_FILL, 0, 0);
+
+  setGoalSensitivities();
+  aboutYouStackable = hildon_stackable_window_new();
+  g_signal_connect(G_OBJECT(aboutYouStackable), "destroy",
+		   G_CALLBACK(checkAboutYou), NULL);
+  gtk_container_add(GTK_CONTAINER(aboutYouStackable), aboutYouTable);
+  gtk_widget_show_all(aboutYouStackable);
+} /* End of  A B O U T  Y O U  B U T T O N  C L I C K E D */
 
 /*
   H E L P  B U T T O N  C L I C K E D
@@ -3653,7 +4206,7 @@ void aboutButtonClicked(GtkButton *button, gpointer userData)
   static int firstCall = TRUE;
   static GtkTextBuffer *aboutBuffer;
   static GtkWidget *aboutTextWidget, *aboutStackable;
-
+  
   dprintf("in aboutButtonClicked()\n");
   if (firstCall) {
     aboutBuffer = gtk_text_buffer_new(NULL);
@@ -3672,9 +4225,9 @@ void aboutButtonClicked(GtkButton *button, gpointer userData)
 
 /*
   M A K E  H I L D O N  B U T T O N S
-
+  
   This function builds the main menu for the app.
- */
+*/
 static void makeHildonButtons(void)
 {
   static HildonAppMenu *hildonMenu;
@@ -3700,11 +4253,23 @@ static void makeHildonButtons(void)
   g_signal_connect(G_OBJECT(trendButton), "clicked", G_CALLBACK(trendButtonClicked), NULL);
   hildon_app_menu_append(hildonMenu, GTK_BUTTON(trendButton));
 
-  /* Settings Button */
-  settingsButton = hildon_gtk_button_new(buttonSize);
-  gtk_button_set_label(GTK_BUTTON(settingsButton), "Settings");
-  g_signal_connect(G_OBJECT(settingsButton), "clicked", G_CALLBACK(settingsButtonClicked), NULL);
-  hildon_app_menu_append(hildonMenu, GTK_BUTTON(settingsButton));
+  /* About You Button */
+  aboutYouButton = hildon_gtk_button_new(buttonSize);
+  gtk_button_set_label(GTK_BUTTON(aboutYouButton), "About You");
+  g_signal_connect(G_OBJECT(aboutYouButton), "clicked", G_CALLBACK(aboutYouButtonClicked), NULL);
+  hildon_app_menu_append(hildonMenu, GTK_BUTTON(aboutYouButton));
+
+  /* Plot Settings Button */
+  plotSettingsButton = hildon_gtk_button_new(buttonSize);
+  gtk_button_set_label(GTK_BUTTON(plotSettingsButton), "Plot Settings");
+  g_signal_connect(G_OBJECT(plotSettingsButton), "clicked", G_CALLBACK(plotSettingsButtonClicked), NULL);
+  hildon_app_menu_append(hildonMenu, GTK_BUTTON(plotSettingsButton));
+
+  /* Fit Settings Button */
+  fitSettingsButton = hildon_gtk_button_new(buttonSize);
+  gtk_button_set_label(GTK_BUTTON(fitSettingsButton), "Fit Settings");
+  g_signal_connect(G_OBJECT(fitSettingsButton), "clicked", G_CALLBACK(fitSettingsButtonClicked), NULL);
+  hildon_app_menu_append(hildonMenu, GTK_BUTTON(fitSettingsButton));
 
   /* Import / Export button */
   iEButton = hildon_gtk_button_new(buttonSize);
