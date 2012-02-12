@@ -25,9 +25,10 @@
   It is similar to the Hacker Diet tools, although it is not a clone
   of that package.   It lacks the features for tracking exercize
   levels which are present in the Hacker Diet tools, but adds other
-  features such as the ability to prdict when a weightloss goal
+  features such as the ability to predict when a weightloss goal
   will be reached.   It is optimized to make daily entry of weight
-  measurements as quick as possible.
+  measurements as quick as possible, and requires no network
+  access.
 
  */
 
@@ -66,6 +67,10 @@
 #define FALSE       (0)
 #define ERROR_EXIT (-1)
 #define OK_EXIT     (0)
+
+#define DATA_CELL   (0)
+#define RIGHT_ARROW (1)
+#define LEFT_ARROW  (2)
 
 #define M_HALF_PI (M_PI * 0.5)
 
@@ -147,11 +152,13 @@ logEntry *editPtr;
 typedef struct logCell {
   GdkPoint        box[4]; /* Coordinates of the little box drawn around this entry */
   logEntry       *ptr;    /* This points to the log entry displayed, which may be edited */
+  int             data;   /* Used to distinguish cell types */
   struct logCell *next;
 } logCell;
 logCell *logCellRoot = NULL;
 logCell *lastLogCell = NULL;
 int logDisplayed = FALSE;
+int logPageOffset = 0;
 
 /* Values which are stored in the settings file */
 double myHeight          =            72.0;
@@ -169,6 +176,7 @@ int fitInterval          =              -1;
 int fitType              = DO_NOT_FIT_DATA;
 int losingWeightIsGood   =            TRUE;
 int startWithDataEntry   =           FALSE;
+/* int interpolateFirstPair =           FALSE; */
 int plotTrendLine        =            TRUE;
 int plotDataPoints       =            TRUE;
 int plotWindow           =            TRUE;
@@ -225,7 +233,8 @@ GtkWidget *window, *mainBox, *drawingArea, *weightButton, *dataEntryAccept, *dat
   *plotSettingsButton, *fitSettingsButton, *plotSettingsStackable, *fitSettingsStackable,
   *setGoalDateButton, *goalDateButton, *plotWindowButton, *plotFromButton, *plotStartButton,
   *plotEndButton, *plotFromFirstButton, *plotToLastButton, *averageIntervalLabel, *aveWeekButton,
-  *aveFortnightButton, *aveMonthButton, *aveQuarterButton, *aveYearButton, *aveHistoryButton;
+  *aveFortnightButton, *aveMonthButton, *aveQuarterButton, *aveYearButton, *aveHistoryButton
+  /* , *interpolateFirstPairButton */;
 
 /* Variables used for setting the format of import/export files */
 #define IE_FIELD_NOT_USED   (0)
@@ -812,6 +821,7 @@ void readSettings(char *fileName)
 	tokenCheck(inLine, "FIT_TYPE",              INT_TOKEN, &fitType);
 	tokenCheck(inLine, "LOSING_WEIGHT_IS_GOOD", INT_TOKEN, &losingWeightIsGood);
 	tokenCheck(inLine, "START_WITH_DATA_ENTRY", INT_TOKEN, &startWithDataEntry);
+	/* tokenCheck(inLine, "INTERPOLATE_FIRST_PAIR",INT_TOKEN, &interpolateFirstPair); */
 	tokenCheck(inLine, "PLOT_TREND_LINE",       INT_TOKEN, &plotTrendLine);
 	tokenCheck(inLine, "PLOT_DATA_POINTS",      INT_TOKEN, &plotDataPoints);
 	tokenCheck(inLine, "PLOT_WINDOW",           INT_TOKEN, &plotWindow);
@@ -1148,6 +1158,21 @@ void redrawScreen(void)
   logEntry *lastPlottable = NULL;
   GdkPoint *dataPoints, *linePoints, *lineTops, box[4];
 
+  /*
+    Here comes a kludge.   A user sent me a settings file which causes the program
+    to crash.   The problem was that plotToLast was set to FALSE, but the day, month
+    and year were set to -1, so the program crashed when trying to plot over some
+    crazy time interval.   I am unable to figure out how the program got into that
+    state, so here I'm checking for that problem (for both start and stop times)
+    and setting the plotToLast flag TRUE if the date it has is clearly bad.   At
+    least the app won't crash then.
+   */
+  if ((!plotToLast) && ((plotEndDay < 0) || (plotEndMonth < 0) || (plotEndYear < 0)))
+    plotToLast = TRUE;
+  if ((!plotFromFirst) && ((plotStartDay < 0) || (plotStartMonth < 0) || (plotStartYear < 0)))
+    plotFromFirst = TRUE;
+  /* End of kludge */
+
   /* Clear the entire display */
   gdk_draw_rectangle(pixmap, drawingArea->style->black_gc,
 		     TRUE, 0, 0,
@@ -1185,6 +1210,16 @@ void redrawScreen(void)
       earliestTJDToPlot = logRoot->time;
     if (latestTJDToPlot > lastEntry->time)
       latestTJDToPlot = lastEntry->time;
+
+    /* If the last date to plot is before the first date, swap the dates */
+    if (latestTJDToPlot < earliestTJDToPlot) {
+      double temp;
+
+      temp = earliestTJDToPlot;
+      earliestTJDToPlot = latestTJDToPlot;
+      latestTJDToPlot = temp;
+      hildon_banner_show_information(drawingArea, "ignored", "Plot start date > end date.   Will swap dates.");
+    }
     if ((fitType != DO_NOT_FIT_DATA) && (!((fitType == FIT_WINDOW) && (fitInterval < 2))) && showTarget &&
 	(gotGoal = calculateGoalDate(&goalDate, NULL, NULL, NULL, NULL, NULL, &slope, &intercept, &nFitPoints))) {
       if (goalDate > latestTJDToPlot)
@@ -1432,12 +1467,12 @@ void redrawScreen(void)
 	All the data to be plotted falls within one month, so we should
 	show the full month name, and the days within the plot range
       */
-      int day, x, y;
+      int day, x, y, lDay, lMonth, lYear;
       double jD;
 
-      tJDToDate((double)((int)logRoot->time), &sYear, &sMonth, &sDay);
+      tJDToDate((double)((int)firstPlottable->time), &lYear, &lMonth, &lDay);
       for (day = 1; day <= monthLengths[sMonth-1]; day++) {
-	jD = (double)calculateJulianDate(sYear, sMonth, day);
+	jD = (double)calculateJulianDate(lYear, lMonth, day);
 	screenCoordinates(xScale, yScale, jD, plotMinY, &x, &y);
 	if ((x > minPlottableX) && (x < maxPlottableX)) {
 	  gdk_draw_line(pixmap, gC[OR_WHITE], x, y, x, y-4);
@@ -1595,7 +1630,8 @@ void redrawScreen(void)
       tJDToDate((double)((int)latestTJDToPlot), &eYear, &eMonth, &eDay);
       if (monthFirst == 2) {
 	sprintf(scratchString, "Weight and Trend Data for %d-%02d-%02d through %d-%02d-%02d   (%d days, %d entries)",
-		sYearS, sMonthS, sDayS, eYear, eMonth, eDay, (int)(0.5 + latestTJDToPlot - earliestTJDToPlot), nPoints);
+		sYearS, sMonthS, sDayS, eYear, eMonth, eDay,
+		(int)(0.5 + latestTJDToPlot - earliestTJDToPlot), nPoints);
       } else {
 	if (monthFirst == 1) {
 	  int temp;
@@ -1608,7 +1644,8 @@ void redrawScreen(void)
 	  eMonth = temp;
 	}
 	sprintf(scratchString, "Weight and Trend Data for %d/%d/%d through %d/%d/%d   (%d days, %d entries)",
-		sDayS, sMonthS, sYearS, eDay, eMonth, eYear, (int)(0.5 + latestTJDToPlot - earliestTJDToPlot), nPoints);
+		sDayS, sMonthS, sYearS, eDay, eMonth, eYear,
+		(int)(0.5 + latestTJDToPlot - earliestTJDToPlot), nPoints);
       }
     }
     renderPangoText(scratchString, OR_WHITE, SMALL_PANGO_FONT,
@@ -2022,6 +2059,7 @@ void trendStackableDestroyed(void)
     logCellRoot = NULL;
     logDisplayed = FALSE;
   }
+  logPageOffset = 0;
   gtk_widget_ref(mainBox);
   gtk_container_remove(GTK_CONTAINER(trendStackable), mainBox);
   gtk_container_add(GTK_CONTAINER(window), mainBox);
@@ -2072,22 +2110,20 @@ int dayOfWeek(int year, int month, int day)
  */
 void logCallback(GtkButton *button, gpointer userData)
 {
-  int year, month, tWidth, tHeight, i;
+  int year, month, tWidth, tHeight, i, nEntries, nPages, titleFont;
   int row = 0;
   int col = 0;
-  char *logMonthString;
+  char logMonthString[100];
   char monthString[10];
   logEntry *ptr;
   logCell *cellPtr;
   GdkPoint box[4];
 
-  dprintf("In logCallback()\n");
   logDisplayed = TRUE;
-  logMonthString = (char *)hildon_button_get_value(HILDON_BUTTON(logSelectorButton));
+  strcpy(logMonthString, (char *)hildon_button_get_value(HILDON_BUTTON(logSelectorButton)));
   for (i = 0; i < strlen(logMonthString); i++)
     if (logMonthString[i] < 32)
       logMonthString[i] = (char)0;
-  dprintf("\"%s\" was selected.\n", logMonthString);
   sscanf(logMonthString, "%s %d", &monthString[0], &year);
   dprintf("Month Name \"%s\", Year: %d\n", monthString, year);
   for (month = 0; month < 12; month++)
@@ -2095,6 +2131,29 @@ void logCallback(GtkButton *button, gpointer userData)
       break;
   month++;
   dprintf("Month number %d\n", month);
+
+  /* Figure out how many pages we need to display all values */
+  ptr = logRoot;
+  nEntries = 0;
+  while (ptr != NULL) {
+    int pDay, pMonth, pYear;
+
+    tJDToDate((double)((int)ptr->time), &pYear, &pMonth, &pDay);
+    if ((pMonth == month) && (pYear == year))
+      nEntries++;
+    ptr = ptr->next;
+  }
+  nPages = nEntries/33 + 1;
+  if (nPages > 1) {
+    if (logPageOffset > nPages-1)
+      logPageOffset = nPages - 1;
+    if (logPageOffset < 0)
+      logPageOffset = 0;
+    sprintf(scratchString, " (page %d of %d)", logPageOffset+1, nPages);
+    strcat(logMonthString, scratchString);
+    col = -3 * logPageOffset;
+  }
+
   if (!mainBoxInTrendStackable) {
     trendStackable = hildon_stackable_window_new();
     g_signal_connect(G_OBJECT(trendStackable), "destroy",
@@ -2111,10 +2170,15 @@ void logCallback(GtkButton *button, gpointer userData)
 		     TRUE, 0, 0,
 		     drawingArea->allocation.width,
 		     drawingArea->allocation.height);
-  renderPangoText(logMonthString, OR_WHITE, BIG_PANGO_FONT,
+  if (nPages == 1)
+    titleFont = BIG_PANGO_FONT;
+  else
+    titleFont = MEDIUM_PANGO_FONT;
+  renderPangoText(logMonthString, OR_WHITE, titleFont,
 		  &tWidth, &tHeight, pixmap, displayWidth/2, 20, 0.0, TRUE, 0, OR_BLACK);
-  renderPangoText(logMonthString, OR_WHITE, BIG_PANGO_FONT,
+  renderPangoText(logMonthString, OR_WHITE, titleFont,
 		  &tWidth, &tHeight, pixmap, displayWidth/2, 20, 0.0, TRUE, 0, OR_BLACK);
+
   ptr = logRoot;
   while (ptr != NULL) {
     int day, pDay, pMonth, pYear;
@@ -2132,22 +2196,28 @@ void logCallback(GtkButton *button, gpointer userData)
       shortDayName[3] = (char)0;
       sprintf(scratchString, "%2d", pDay);
       renderPangoText(scratchString, OR_WHITE, MEDIUM_PANGO_FONT,
-		      &tWidth, &tHeight, pixmap, 20+col*displayWidth/3, 70+row*30, 0.0, FALSE, 0, OR_BLACK);
+		      &tWidth, &tHeight, pixmap, 20+col*displayWidth/3,
+		      70+row*30, 0.0, FALSE, 0, OR_BLACK);
       renderPangoText(shortDayName, OR_WHITE, MEDIUM_PANGO_FONT,
-		      &tWidth, &tHeight, pixmap, 55+col*displayWidth/3, 70+row*30, 0.0, FALSE, 0, OR_BLACK);
+		      &tWidth, &tHeight, pixmap, 55+col*displayWidth/3,
+		      70+row*30, 0.0, FALSE, 0, OR_BLACK);
       sprintf(scratchString, "%5.1f", ptr->weight);
       if (nonjudgementalColors)
 	renderPangoText(scratchString, OR_BLUE, MEDIUM_PANGO_FONT,
-			&tWidth, &tHeight, pixmap, 115+col*displayWidth/3, 70+row*30, 0.0, FALSE, 0, OR_BLACK);
+			&tWidth, &tHeight, pixmap, 115+col*displayWidth/3,
+			70+row*30, 0.0, FALSE, 0, OR_BLACK);
       else if (ptr->weight <= trend)
 	renderPangoText(scratchString, goodColor, MEDIUM_PANGO_FONT,
-			&tWidth, &tHeight, pixmap, 115+col*displayWidth/3, 70+row*30, 0.0, FALSE, 0, OR_BLACK);
+			&tWidth, &tHeight, pixmap, 115+col*displayWidth/3,
+			70+row*30, 0.0, FALSE, 0, OR_BLACK);
       else
 	renderPangoText(scratchString, badColor, MEDIUM_PANGO_FONT,
-			&tWidth, &tHeight, pixmap, 115+col*displayWidth/3, 70+row*30, 0.0, FALSE, 0, OR_BLACK);
+			&tWidth, &tHeight, pixmap, 115+col*displayWidth/3,
+			70+row*30, 0.0, FALSE, 0, OR_BLACK);
       sprintf(scratchString, "%5.1f", trend);
       renderPangoText(scratchString, OR_YELLOW, MEDIUM_PANGO_FONT,
-		      &tWidth, &tHeight, pixmap, 185+col*displayWidth/3, 70+row*30, 0.0, FALSE, 0, OR_BLACK);
+		      &tWidth, &tHeight, pixmap, 185+col*displayWidth/3,
+		      70+row*30, 0.0, FALSE, 0, OR_BLACK);
       box[0].x = 17+col*displayWidth/3; box[0].y = 56+row*30;
       box[1].x = box[0].x + 234;        box[1].y = box[0].y;
       box[2].x = box[1].x;              box[2].y = box[1].y + 26;
@@ -2160,6 +2230,7 @@ void logCallback(GtkButton *button, gpointer userData)
       gdk_draw_polygon(pixmap, gC[OR_DARK_GREY], FALSE, box, 4);
       cellPtr = (logCell *)malloc(sizeof(logCell));
       if (cellPtr != NULL) {
+	cellPtr->data = DATA_CELL;
 	for (i = 0; i < 4; i++) {
 	  cellPtr->box[i].x = box[i].x;
 	  cellPtr->box[i].y = box[i].y;
@@ -2181,10 +2252,55 @@ void logCallback(GtkButton *button, gpointer userData)
     }
     ptr = ptr->next;
   }
-  renderPangoText("Click on an entry, if you wish to edit or delete it.", OR_BLUE, MEDIUM_PANGO_FONT,
-		  &tWidth, &tHeight, pixmap, displayWidth/2, displayHeight-20, 0.0, TRUE, 0, OR_BLACK);
-  renderPangoText("Click on an entry, if you wish to edit or delete it.", OR_BLUE, MEDIUM_PANGO_FONT,
-		  &tWidth, &tHeight, pixmap, displayWidth/2, displayHeight-20, 0.0, TRUE, 0, OR_BLACK);
+  if (nPages > 1) {
+    /* Plot the directional arrows for navigating from page to page */
+    if (logPageOffset < (nPages-1)) {
+      box[0].x = displayWidth*5/6 - 10; box[0].y = 3;
+      box[1].x = box[0].x;         box[1].y = 53;
+      box[2].x = displayWidth-2;   box[2].y = (box[0].y + box[1].y) / 2;
+      renderPangoText("Next Page", OR_BLUE, SMALL_PANGO_FONT,
+		      &tWidth, &tHeight, pixmap, displayWidth*11/12 - 30, box[2].y - 1, 0.0, TRUE, 0, OR_BLACK);
+      gdk_draw_polygon(pixmap, gC[OR_BLUE], FALSE, box, 3);
+      cellPtr = (logCell *)malloc(sizeof(logCell));
+      if (cellPtr != NULL) {
+	cellPtr->box[0].x = box[0].x;     cellPtr->box[0].y = 0;
+	cellPtr->box[1].x = box[0].x;     cellPtr->box[1].y = box[1].y;
+	cellPtr->box[2].x = displayWidth; cellPtr->box[2].y = box[1].y;
+	cellPtr->box[3].x = displayWidth; cellPtr->box[3].y = 0;
+	lastLogCell->next = cellPtr;
+	lastLogCell = cellPtr;
+	cellPtr->next = NULL;
+	cellPtr->data = RIGHT_ARROW;
+      }
+    }
+    if (logPageOffset > 0) {
+      box[0].x = displayWidth/6 + 10; box[0].y = 3;
+      box[1].x = box[0].x;            box[1].y = 53;
+      box[2].x = 2;                   box[2].y = (box[0].y + box[1].y) / 2;
+      renderPangoText("Last Page", OR_BLUE, SMALL_PANGO_FONT,
+		      &tWidth, &tHeight, pixmap, displayWidth/12 + 33, box[2].y - 1, 0.0, TRUE, 0, OR_BLACK);
+      gdk_draw_polygon(pixmap, gC[OR_BLUE], FALSE, box, 3);
+      cellPtr = (logCell *)malloc(sizeof(logCell));
+      if (cellPtr != NULL) {
+	cellPtr->box[0].x = 0;        cellPtr->box[0].y = 0;
+	cellPtr->box[1].x = 0;        cellPtr->box[1].y = box[1].y;
+	cellPtr->box[2].x = box[0].x; cellPtr->box[2].y = box[1].y;
+	cellPtr->box[3].x = box[0].x; cellPtr->box[3].y = 0;
+	lastLogCell->next = cellPtr;
+	lastLogCell = cellPtr;
+	cellPtr->next = NULL;
+	cellPtr->data = LEFT_ARROW;
+      }
+    }
+  }
+  renderPangoText("Click on an entry, if you wish to edit or delete it.",
+		  OR_BLUE, MEDIUM_PANGO_FONT,
+		  &tWidth, &tHeight, pixmap, displayWidth/2, displayHeight-20,
+		  0.0, TRUE, 0, OR_BLACK);
+  renderPangoText("Click on an entry, if you wish to edit or delete it.",
+		  OR_BLUE, MEDIUM_PANGO_FONT,
+		  &tWidth, &tHeight, pixmap, displayWidth/2, displayHeight-20,
+		  0.0, TRUE, 0, OR_BLACK);
 } /* End of  L O G  C A L L B A C K */
 
 /*
@@ -2228,7 +2344,8 @@ void logButtonClicked(GtkButton *button, gpointer userData)
     column = hildon_touch_selector_append_text_column(HILDON_TOUCH_SELECTOR(monthSelector),
 						      GTK_TREE_MODEL(model), TRUE);
     g_object_set(G_OBJECT(column), "text-column", 0, NULL);  
-    logSelectorButton = hildon_picker_button_new(HILDON_SIZE_AUTO, HILDON_BUTTON_ARRANGEMENT_VERTICAL);
+    logSelectorButton = hildon_picker_button_new(HILDON_SIZE_AUTO,
+						 HILDON_BUTTON_ARRANGEMENT_VERTICAL);
     hildon_touch_selector_set_active(HILDON_TOUCH_SELECTOR(monthSelector), 0, nMonths-1);
     hildon_button_set_title(HILDON_BUTTON(logSelectorButton), "Month to examine");
     hildon_picker_button_set_selector(HILDON_PICKER_BUTTON(logSelectorButton),
@@ -2311,7 +2428,8 @@ void trendButtonClicked(GtkButton *button, gpointer userData)
     nItems++;
 
   if (haveGoalDate && (nItems >= 6)
-      && calculateGoalDate(&goalJD, &goalYear, &goalMonth, &goalDay, &goalHour, &goalMinute, NULL, NULL, NULL))
+      && calculateGoalDate(&goalJD, &goalYear, &goalMonth, &goalDay, &goalHour, &goalMinute,
+			   NULL, NULL, NULL))
     shouldSkipFortnight = TRUE;
 
   box[0].x = 0;            box[0].y = 100-delta;
@@ -2382,218 +2500,266 @@ void trendButtonClicked(GtkButton *button, gpointer userData)
 
     if (line == (nItems-1)) {
       renderPangoText("All History", OR_WHITE, MEDIUM_PANGO_FONT,
-		      &tWidth, &tHeight, pixmap, 5, 200+(35*(line-shouldSkipFortnight))-delta, 0.0, FALSE, 0, OR_DARK_GREY);
+		      &tWidth, &tHeight, pixmap, 5, 200+(35*(line-shouldSkipFortnight))-delta,
+		      0.0, FALSE, 0, OR_DARK_GREY);
       deltaTime = lastEntry->time - logRoot->time;
       temp = (startWeightH-endWeightH)/(deltaTime/((float)ONE_WEEK));
       if (nonjudgementalColors) {
 	sprintf(scratchString, "%4.2f", -temp);
 	renderPangoText(scratchString, OR_WHITE, MEDIUM_PANGO_FONT,
-			&tWidth, &tHeight, pixmap, 170, 200+(35*(line-shouldSkipFortnight))-delta, 0.0, FALSE, 0, OR_DARK_GREY);
+			&tWidth, &tHeight, pixmap, 170, 200+(35*(line-shouldSkipFortnight))-delta,
+			0.0, FALSE, 0, OR_DARK_GREY);
       } else {
 	sprintf(scratchString, "%4.2f", fabs(temp));
 	if (temp < 0.0) 
 	  renderPangoText(scratchString, badColor, MEDIUM_PANGO_FONT,
-			  &tWidth, &tHeight, pixmap, 170, 200+(35*(line-shouldSkipFortnight))-delta, 0.0, FALSE, 0, OR_DARK_GREY);
+			  &tWidth, &tHeight, pixmap, 170, 200+(35*(line-shouldSkipFortnight))-delta,
+			  0.0, FALSE, 0, OR_DARK_GREY);
 	else
 	  renderPangoText(scratchString, goodColor, MEDIUM_PANGO_FONT,
-			  &tWidth, &tHeight, pixmap, 170, 200+(35*(line-shouldSkipFortnight))-delta, 0.0, FALSE, 0, OR_DARK_GREY);
+			  &tWidth, &tHeight, pixmap, 170, 200+(35*(line-shouldSkipFortnight))-delta,
+			  0.0, FALSE, 0, OR_DARK_GREY);
       }
       temp = calCon*(startWeightH-endWeightH)*(CALORIES_PER_POUND/deltaTime);
       if (nonjudgementalColors) {
 	sprintf(scratchString, "%4.0f", -temp);
 	renderPangoText(scratchString, OR_WHITE, MEDIUM_PANGO_FONT,
-		      &tWidth, &tHeight, pixmap, 380, 200+(35*(line-shouldSkipFortnight))-delta, 0.0, FALSE, 0, OR_DARK_GREY);
+		      &tWidth, &tHeight, pixmap, 380, 200+(35*(line-shouldSkipFortnight))-delta,
+			0.0, FALSE, 0, OR_DARK_GREY);
       } else {
 	sprintf(scratchString, "%4.0f", fabs(temp));
 	if (temp < 0.0)
 	  renderPangoText(scratchString, badColor, MEDIUM_PANGO_FONT,
-			  &tWidth, &tHeight, pixmap, 380, 200+(35*(line-shouldSkipFortnight))-delta, 0.0, FALSE, 0, OR_DARK_GREY);
+			  &tWidth, &tHeight, pixmap, 380, 200+(35*(line-shouldSkipFortnight))-delta,
+			  0.0, FALSE, 0, OR_DARK_GREY);
 	else
 	  renderPangoText(scratchString, goodColor, MEDIUM_PANGO_FONT,
-			  &tWidth, &tHeight, pixmap, 380, 200+(35*(line-shouldSkipFortnight))-delta, 0.0, FALSE, 0, OR_DARK_GREY);
+			  &tWidth, &tHeight, pixmap, 380, 200+(35*(line-shouldSkipFortnight))-delta,
+			  0.0, FALSE, 0, OR_DARK_GREY);
       }
       sprintf(scratchString, "%5.1f    %5.1f    %5.1f", minWeightH, aveWeightH, maxWeightH);
       renderPangoText(scratchString, OR_WHITE, MEDIUM_PANGO_FONT,
-		      &tWidth, &tHeight, pixmap, 561, 200+(35*(line-shouldSkipFortnight))-delta, 0.0, FALSE, 0, OR_DARK_GREY);
+		      &tWidth, &tHeight, pixmap, 561, 200+(35*(line-shouldSkipFortnight))-delta,
+		      0.0, FALSE, 0, OR_DARK_GREY);
     } else
       switch (line) {
       case 0:
 	renderPangoText("Week", OR_WHITE, MEDIUM_PANGO_FONT,
-			&tWidth, &tHeight, pixmap, 5, 200+(35*line)-delta, 0.0, FALSE, 0, OR_DARK_GREY);      
+			&tWidth, &tHeight, pixmap, 5, 200+(35*line)-delta, 0.0,
+			FALSE, 0, OR_DARK_GREY);      
 	temp = startWeightW-endWeightW;
 	if (nonjudgementalColors) {
 	  sprintf(scratchString, "%4.2f", -temp);
 	  renderPangoText(scratchString, OR_WHITE, MEDIUM_PANGO_FONT,
-			  &tWidth, &tHeight, pixmap, 170, 200+(35*line)-delta, 0.0, FALSE, 0, OR_DARK_GREY);
+			  &tWidth, &tHeight, pixmap, 170, 200+(35*line)-delta, 0.0,
+			  FALSE, 0, OR_DARK_GREY);
 	} else {
 	  sprintf(scratchString, "%4.2f", fabs(temp));
 	  if (temp < 0.0) 
 	    renderPangoText(scratchString, badColor, MEDIUM_PANGO_FONT,
-			    &tWidth, &tHeight, pixmap, 170, 200+(35*line)-delta, 0.0, FALSE, 0, OR_DARK_GREY);
+			    &tWidth, &tHeight, pixmap, 170, 200+(35*line)-delta,
+			    0.0, FALSE, 0, OR_DARK_GREY);
 	  else
 	    renderPangoText(scratchString, goodColor, MEDIUM_PANGO_FONT,
-			    &tWidth, &tHeight, pixmap, 170, 200+(35*line)-delta, 0.0, FALSE, 0, OR_DARK_GREY);
+			    &tWidth, &tHeight, pixmap, 170, 200+(35*line)-delta,
+			    0.0, FALSE, 0, OR_DARK_GREY);
 	}
 	temp = calCon*(startWeightW-endWeightW)*(CALORIES_PER_POUND/((float)ONE_WEEK));
 	if (nonjudgementalColors) {
 	  sprintf(scratchString, "%4.0f", -temp);
 	  renderPangoText(scratchString, OR_WHITE, MEDIUM_PANGO_FONT,
-			  &tWidth, &tHeight, pixmap, 380, 200+(35*line)-delta, 0.0, FALSE, 0, OR_DARK_GREY);
+			  &tWidth, &tHeight, pixmap, 380, 200+(35*line)-delta,
+			  0.0, FALSE, 0, OR_DARK_GREY);
 	} else {
 	  sprintf(scratchString, "%4.0f", fabs(temp));
 	  if (temp < 0.0)
 	    renderPangoText(scratchString, badColor, MEDIUM_PANGO_FONT,
-			    &tWidth, &tHeight, pixmap, 380, 200+(35*line)-delta, 0.0, FALSE, 0, OR_DARK_GREY);
+			    &tWidth, &tHeight, pixmap, 380, 200+(35*line)-delta,
+			    0.0, FALSE, 0, OR_DARK_GREY);
 	  else
 	    renderPangoText(scratchString, goodColor, MEDIUM_PANGO_FONT,
-			    &tWidth, &tHeight, pixmap, 380, 200+(35*line)-delta, 0.0, FALSE, 0, OR_DARK_GREY);
+			    &tWidth, &tHeight, pixmap, 380, 200+(35*line)-delta,
+			    0.0, FALSE, 0, OR_DARK_GREY);
 	}
 	sprintf(scratchString, "%5.1f    %5.1f    %5.1f", minWeightW, aveWeightW, maxWeightW);
 	renderPangoText(scratchString, OR_WHITE, MEDIUM_PANGO_FONT,
-			&tWidth, &tHeight, pixmap, 561, 200+(35*line)-delta, 0.0, FALSE, 0, OR_DARK_GREY);
+			&tWidth, &tHeight, pixmap, 561, 200+(35*line)-delta,
+			0.0, FALSE, 0, OR_DARK_GREY);
 	break;
       case 1:
 	if (!shouldSkipFortnight) {
 	  shouldSkipFortnight = FALSE;
 	  renderPangoText("Fortnight", OR_WHITE, MEDIUM_PANGO_FONT,
-			  &tWidth, &tHeight, pixmap, 5, 200+(35*line)-delta, 0.0, FALSE, 0, OR_DARK_GREY);      
+			  &tWidth, &tHeight, pixmap, 5, 200+(35*line)-delta,
+			  0.0, FALSE, 0, OR_DARK_GREY);      
 	  temp = (startWeightF-endWeightF)/2.0;
 	  if (nonjudgementalColors) {
 	    sprintf(scratchString, "%4.2f", -temp);
 	    renderPangoText(scratchString, OR_WHITE, MEDIUM_PANGO_FONT,
-			    &tWidth, &tHeight, pixmap, 170, 200+(35*line)-delta, 0.0, FALSE, 0, OR_DARK_GREY);
+			    &tWidth, &tHeight, pixmap, 170, 200+(35*line)-delta,
+			    0.0, FALSE, 0, OR_DARK_GREY);
 	  } else {
 	    sprintf(scratchString, "%4.2f", fabs(temp));
 	    if (temp < 0.0) 
 	      renderPangoText(scratchString, badColor, MEDIUM_PANGO_FONT,
-			      &tWidth, &tHeight, pixmap, 170, 200+(35*line)-delta, 0.0, FALSE, 0, OR_DARK_GREY);
+			      &tWidth, &tHeight, pixmap, 170, 200+(35*line)-delta,
+			      0.0, FALSE, 0, OR_DARK_GREY);
 	    else
 	      renderPangoText(scratchString, goodColor, MEDIUM_PANGO_FONT,
-			      &tWidth, &tHeight, pixmap, 170, 200+(35*line)-delta, 0.0, FALSE, 0, OR_DARK_GREY);
+			      &tWidth, &tHeight, pixmap, 170, 200+(35*line)-delta,
+			      0.0, FALSE, 0, OR_DARK_GREY);
 	  }
 	  temp = calCon*(startWeightF-endWeightF)*(CALORIES_PER_POUND/((float)ONE_FORTNIGHT));
 	  if (nonjudgementalColors) {
 	    sprintf(scratchString, "%4.0f", -temp);
 	    renderPangoText(scratchString, OR_WHITE, MEDIUM_PANGO_FONT,
-			    &tWidth, &tHeight, pixmap, 380, 200+(35*line)-delta, 0.0, FALSE, 0, OR_DARK_GREY);
+			    &tWidth, &tHeight, pixmap, 380, 200+(35*line)-delta,
+			    0.0, FALSE, 0, OR_DARK_GREY);
 	  } else {
 	    sprintf(scratchString, "%4.0f", fabs(temp));
 	    if (temp < 0.0)
 	      renderPangoText(scratchString, badColor, MEDIUM_PANGO_FONT,
-			      &tWidth, &tHeight, pixmap, 380, 200+(35*line)-delta, 0.0, FALSE, 0, OR_DARK_GREY);
+			      &tWidth, &tHeight, pixmap, 380, 200+(35*line)-delta,
+			      0.0, FALSE, 0, OR_DARK_GREY);
 	    else
 	      renderPangoText(scratchString, goodColor, MEDIUM_PANGO_FONT,
-			      &tWidth, &tHeight, pixmap, 380, 200+(35*line)-delta, 0.0, FALSE, 0, OR_DARK_GREY);
+			      &tWidth, &tHeight, pixmap, 380, 200+(35*line)-delta,
+			      0.0, FALSE, 0, OR_DARK_GREY);
 	  }
 	  sprintf(scratchString, "%5.1f    %5.1f    %5.1f", minWeightF, aveWeightF, maxWeightF);
 	  renderPangoText(scratchString, OR_WHITE, MEDIUM_PANGO_FONT,
-			  &tWidth, &tHeight, pixmap, 561, 200+(35*line)-delta, 0.0, FALSE, 0, OR_DARK_GREY);
+			  &tWidth, &tHeight, pixmap, 561, 200+(35*line)-delta,
+			  0.0, FALSE, 0, OR_DARK_GREY);
 	}
 	break;
       case 2:
 	renderPangoText("Month", OR_WHITE, MEDIUM_PANGO_FONT,
-			&tWidth, &tHeight, pixmap, 5, 200+(35*(line-shouldSkipFortnight))-delta, 0.0, FALSE, 0, OR_DARK_GREY);      
+			&tWidth, &tHeight, pixmap, 5, 200+(35*(line-shouldSkipFortnight))-delta,
+			0.0, FALSE, 0, OR_DARK_GREY);      
 	temp = (startWeightM-endWeightM)/(((float)ONE_MONTH)/((float)ONE_WEEK));
 	if (nonjudgementalColors) {
 	  sprintf(scratchString, "%4.2f", -temp);
 	  renderPangoText(scratchString, OR_WHITE, MEDIUM_PANGO_FONT,
-			  &tWidth, &tHeight, pixmap, 170, 200+(35*(line-shouldSkipFortnight))-delta, 0.0, FALSE, 0, OR_DARK_GREY);
+			  &tWidth, &tHeight, pixmap, 170, 200+(35*(line-shouldSkipFortnight))-delta,
+			  0.0, FALSE, 0, OR_DARK_GREY);
 	} else {
 	  sprintf(scratchString, "%4.2f", fabs(temp));
 	  if (temp < 0.0) 
 	    renderPangoText(scratchString, badColor, MEDIUM_PANGO_FONT,
-			    &tWidth, &tHeight, pixmap, 170, 200+(35*(line-shouldSkipFortnight))-delta, 0.0, FALSE, 0, OR_DARK_GREY);
+			    &tWidth, &tHeight, pixmap, 170, 200+(35*(line-shouldSkipFortnight))-delta,
+			    0.0, FALSE, 0, OR_DARK_GREY);
 	  else
 	    renderPangoText(scratchString, goodColor, MEDIUM_PANGO_FONT,
-			    &tWidth, &tHeight, pixmap, 170, 200+(35*(line-shouldSkipFortnight))-delta, 0.0, FALSE, 0, OR_DARK_GREY);
+			    &tWidth, &tHeight, pixmap, 170, 200+(35*(line-shouldSkipFortnight))-delta,
+			    0.0, FALSE, 0, OR_DARK_GREY);
 	}
 	temp = calCon*(startWeightM-endWeightM)*(CALORIES_PER_POUND/((float)ONE_MONTH));
 	if (nonjudgementalColors) {
 	  sprintf(scratchString, "%4.0f", -temp);
 	  renderPangoText(scratchString, OR_WHITE, MEDIUM_PANGO_FONT,
-			  &tWidth, &tHeight, pixmap, 380, 200+(35*(line-shouldSkipFortnight))-delta, 0.0, FALSE, 0, OR_DARK_GREY);
+			  &tWidth, &tHeight, pixmap, 380, 200+(35*(line-shouldSkipFortnight))-delta,
+			  0.0, FALSE, 0, OR_DARK_GREY);
 	} else {
 	  sprintf(scratchString, "%4.0f", fabs(temp));
 	  if (temp < 0.0)
 	    renderPangoText(scratchString, badColor, MEDIUM_PANGO_FONT,
-			    &tWidth, &tHeight, pixmap, 380, 200+(35*(line-shouldSkipFortnight))-delta, 0.0, FALSE, 0, OR_DARK_GREY);
+			    &tWidth, &tHeight, pixmap, 380, 200+(35*(line-shouldSkipFortnight))-delta,
+			    0.0, FALSE, 0, OR_DARK_GREY);
 	  else
 	    renderPangoText(scratchString, goodColor, MEDIUM_PANGO_FONT,
-			    &tWidth, &tHeight, pixmap, 380, 200+(35*(line-shouldSkipFortnight))-delta, 0.0, FALSE, 0, OR_DARK_GREY);
+			    &tWidth, &tHeight, pixmap, 380, 200+(35*(line-shouldSkipFortnight))-delta,
+			    0.0, FALSE, 0, OR_DARK_GREY);
 	}
 	sprintf(scratchString, "%5.1f    %5.1f    %5.1f", minWeightM, aveWeightM, maxWeightM);
 	renderPangoText(scratchString, OR_WHITE, MEDIUM_PANGO_FONT,
-			&tWidth, &tHeight, pixmap, 561, 200+(35*(line-shouldSkipFortnight))-delta, 0.0, FALSE, 0, OR_DARK_GREY);
+			&tWidth, &tHeight, pixmap, 561, 200+(35*(line-shouldSkipFortnight))-delta,
+			0.0, FALSE, 0, OR_DARK_GREY);
 	break;
       case 3:
 	renderPangoText("Quarter", OR_WHITE, MEDIUM_PANGO_FONT,
-			&tWidth, &tHeight, pixmap, 5, 200+(35*(line-shouldSkipFortnight))-delta, 0.0, FALSE, 0, OR_DARK_GREY);      
+			&tWidth, &tHeight, pixmap, 5, 200+(35*(line-shouldSkipFortnight))-delta,
+			0.0, FALSE, 0, OR_DARK_GREY);      
 	temp = (startWeightQ-endWeightQ)/13.0;
 	if (nonjudgementalColors) {
 	  sprintf(scratchString, "%4.2f", -temp);
 	  renderPangoText(scratchString, OR_WHITE, MEDIUM_PANGO_FONT,
-			  &tWidth, &tHeight, pixmap, 170, 200+(35*(line-shouldSkipFortnight))-delta, 0.0, FALSE, 0, OR_DARK_GREY);
+			  &tWidth, &tHeight, pixmap, 170, 200+(35*(line-shouldSkipFortnight))-delta,
+			  0.0, FALSE, 0, OR_DARK_GREY);
 	} else {
 	  sprintf(scratchString, "%4.2f", fabs(temp));
 	  if (temp < 0.0) 
 	    renderPangoText(scratchString, badColor, MEDIUM_PANGO_FONT,
-			    &tWidth, &tHeight, pixmap, 170, 200+(35*(line-shouldSkipFortnight))-delta, 0.0, FALSE, 0, OR_DARK_GREY);
+			    &tWidth, &tHeight, pixmap, 170, 200+(35*(line-shouldSkipFortnight))-delta,
+			    0.0, FALSE, 0, OR_DARK_GREY);
 	  else
 	    renderPangoText(scratchString, goodColor, MEDIUM_PANGO_FONT,
-			    &tWidth, &tHeight, pixmap, 170, 200+(35*(line-shouldSkipFortnight))-delta, 0.0, FALSE, 0, OR_DARK_GREY);
+			    &tWidth, &tHeight, pixmap, 170, 200+(35*(line-shouldSkipFortnight))-delta,
+			    0.0, FALSE, 0, OR_DARK_GREY);
 	}
 	temp = calCon*(startWeightQ-endWeightQ)*(CALORIES_PER_POUND/((float)ONE_QUARTER));
 	if (nonjudgementalColors) {
 	  sprintf(scratchString, "%4.0f", -temp);
 	  renderPangoText(scratchString, OR_WHITE, MEDIUM_PANGO_FONT,
-			  &tWidth, &tHeight, pixmap, 380, 200+(35*(line-shouldSkipFortnight))-delta, 0.0, FALSE, 0, OR_DARK_GREY);
+			  &tWidth, &tHeight, pixmap, 380, 200+(35*(line-shouldSkipFortnight))-delta,
+			  0.0, FALSE, 0, OR_DARK_GREY);
 	} else {
 	  sprintf(scratchString, "%4.0f", fabs(temp));
 	  if (temp < 0.0)
 	    renderPangoText(scratchString, badColor, MEDIUM_PANGO_FONT,
-			    &tWidth, &tHeight, pixmap, 380, 200+(35*(line-shouldSkipFortnight))-delta, 0.0, FALSE, 0, OR_DARK_GREY);
+			    &tWidth, &tHeight, pixmap, 380, 200+(35*(line-shouldSkipFortnight))-delta,
+			    0.0, FALSE, 0, OR_DARK_GREY);
 	  else
 	    renderPangoText(scratchString, goodColor, MEDIUM_PANGO_FONT,
-			    &tWidth, &tHeight, pixmap, 380, 200+(35*(line-shouldSkipFortnight))-delta, 0.0, FALSE, 0, OR_DARK_GREY);
+			    &tWidth, &tHeight, pixmap, 380, 200+(35*(line-shouldSkipFortnight))-delta,
+			    0.0, FALSE, 0, OR_DARK_GREY);
 	}
 	sprintf(scratchString, "%5.1f    %5.1f    %5.1f", minWeightQ, aveWeightQ, maxWeightQ);
 	renderPangoText(scratchString, OR_WHITE, MEDIUM_PANGO_FONT,
-			&tWidth, &tHeight, pixmap, 561, 200+(35*(line-shouldSkipFortnight))-delta, 0.0, FALSE, 0, OR_DARK_GREY);
+			&tWidth, &tHeight, pixmap, 561, 200+(35*(line-shouldSkipFortnight))-delta,
+			0.0, FALSE, 0, OR_DARK_GREY);
 	break;
       case 4:
 	renderPangoText("Year", OR_WHITE, MEDIUM_PANGO_FONT,
-			&tWidth, &tHeight, pixmap, 5, 200+(35*(line-shouldSkipFortnight))-delta, 0.0, FALSE, 0, OR_DARK_GREY);      
+			&tWidth, &tHeight, pixmap, 5, 200+(35*(line-shouldSkipFortnight))-delta,
+			0.0, FALSE, 0, OR_DARK_GREY);      
 	temp = (startWeightY-endWeightY)/(((float)ONE_YEAR)/((float)ONE_WEEK));
 	if (nonjudgementalColors) {
 	  sprintf(scratchString, "%4.2f", -temp);
 	  renderPangoText(scratchString, OR_WHITE, MEDIUM_PANGO_FONT,
-			  &tWidth, &tHeight, pixmap, 170, 200+(35*(line-shouldSkipFortnight))-delta, 0.0, FALSE, 0, OR_DARK_GREY);
+			  &tWidth, &tHeight, pixmap, 170, 200+(35*(line-shouldSkipFortnight))-delta,
+			  0.0, FALSE, 0, OR_DARK_GREY);
 	} else {
 	  sprintf(scratchString, "%4.2f", fabs(temp));
 	  if (temp < 0.0) 
 	    renderPangoText(scratchString, badColor, MEDIUM_PANGO_FONT,
-			    &tWidth, &tHeight, pixmap, 170, 200+(35*(line-shouldSkipFortnight))-delta, 0.0, FALSE, 0, OR_DARK_GREY);
+			    &tWidth, &tHeight, pixmap, 170, 200+(35*(line-shouldSkipFortnight))-delta,
+			    0.0, FALSE, 0, OR_DARK_GREY);
 	  else
 	    renderPangoText(scratchString, goodColor, MEDIUM_PANGO_FONT,
-			    &tWidth, &tHeight, pixmap, 170, 200+(35*(line-shouldSkipFortnight))-delta, 0.0, FALSE, 0, OR_DARK_GREY);
+			    &tWidth, &tHeight, pixmap, 170, 200+(35*(line-shouldSkipFortnight))-delta,
+			    0.0, FALSE, 0, OR_DARK_GREY);
 	}
 	temp = calCon*(startWeightY-endWeightY)*(CALORIES_PER_POUND/((float)ONE_YEAR));
 	if (nonjudgementalColors) {
 	  sprintf(scratchString, "%4.0f", -temp);
 	  renderPangoText(scratchString, OR_WHITE, MEDIUM_PANGO_FONT,
-			  &tWidth, &tHeight, pixmap, 380, 200+(35*(line-shouldSkipFortnight))-delta, 0.0, FALSE, 0, OR_DARK_GREY);
+			  &tWidth, &tHeight, pixmap, 380, 200+(35*(line-shouldSkipFortnight))-delta,
+			  0.0, FALSE, 0, OR_DARK_GREY);
 	} else {
 	  sprintf(scratchString, "%4.0f", fabs(temp));
 	  if (temp < 0.0)
 	    renderPangoText(scratchString, badColor, MEDIUM_PANGO_FONT,
-			    &tWidth, &tHeight, pixmap, 380, 200+(35*(line-shouldSkipFortnight))-delta, 0.0, FALSE, 0, OR_DARK_GREY);
+			    &tWidth, &tHeight, pixmap, 380, 200+(35*(line-shouldSkipFortnight))-delta,
+			    0.0, FALSE, 0, OR_DARK_GREY);
 	  else
 	    renderPangoText(scratchString, goodColor, MEDIUM_PANGO_FONT,
-			    &tWidth, &tHeight, pixmap, 380, 200+(35*(line-shouldSkipFortnight))-delta, 0.0, FALSE, 0, OR_DARK_GREY);
+			    &tWidth, &tHeight, pixmap, 380, 200+(35*(line-shouldSkipFortnight))-delta,
+			    0.0, FALSE, 0, OR_DARK_GREY);
 	}
 	sprintf(scratchString, "%5.1f    %5.1f    %5.1f", minWeightY, aveWeightY, maxWeightY);
 	renderPangoText(scratchString, OR_WHITE, MEDIUM_PANGO_FONT,
-			&tWidth, &tHeight, pixmap, 561, 200+(35*(line-shouldSkipFortnight))-delta, 0.0, FALSE, 0, OR_DARK_GREY);
+			&tWidth, &tHeight, pixmap, 561, 200+(35*(line-shouldSkipFortnight))-delta,
+			0.0, FALSE, 0, OR_DARK_GREY);
 	break;
       }
     if (haveGoalDate) {
@@ -2642,7 +2808,8 @@ void trendButtonClicked(GtkButton *button, gpointer userData)
 		    myTarget, unitString, tTargetMonth, tTargetDay, targetYear, calsPerDay);
 	}
       }
-      if (calculateGoalDate(&goalJD, &goalYear, &goalMonth, &goalDay, &goalHour, &goalMinute, NULL, NULL, NULL))
+      if (calculateGoalDate(&goalJD, &goalYear, &goalMonth, &goalDay, &goalHour, &goalMinute,
+			    NULL, NULL, NULL))
 	y = displayHeight-51;
       else
 	y = displayHeight-18;
@@ -2651,7 +2818,8 @@ void trendButtonClicked(GtkButton *button, gpointer userData)
       renderPangoText(scratchString, OR_WHITE, MEDIUM_PANGO_FONT,
 		      &tWidth, &tHeight, pixmap, displayWidth/2, y, 0.0, TRUE, 0, OR_BLACK);
     }
-    if (calculateGoalDate(&goalJD, &goalYear, &goalMonth, &goalDay, &goalHour, &goalMinute, NULL, NULL, NULL)) {
+    if (calculateGoalDate(&goalJD, &goalYear, &goalMonth, &goalDay, &goalHour, &goalMinute,
+			  NULL, NULL, NULL)) {
       if (goalJD < lastEntry->time)
 	sprintf(scratchString, "The fit indicates you won't reach your target weight; you have passed it.");
       else {
@@ -2671,9 +2839,11 @@ void trendButtonClicked(GtkButton *button, gpointer userData)
 	}
       }
       renderPangoText(scratchString, OR_WHITE, MEDIUM_PANGO_FONT,
-		      &tWidth, &tHeight, pixmap, displayWidth/2, displayHeight-18, 0.0, TRUE, 0, OR_BLACK);
+		      &tWidth, &tHeight, pixmap, displayWidth/2, displayHeight-18,
+		      0.0, TRUE, 0, OR_BLACK);
       renderPangoText(scratchString, OR_WHITE, MEDIUM_PANGO_FONT,
-		      &tWidth, &tHeight, pixmap, displayWidth/2, displayHeight-18, 0.0, TRUE, 0, OR_BLACK);
+		      &tWidth, &tHeight, pixmap, displayWidth/2, displayHeight-18,
+		      0.0, TRUE, 0, OR_BLACK);
     }
   }
 } /* End of  T R E N D  B U T T O N  C L I C K E D */
@@ -2707,6 +2877,7 @@ void writeSettings(void)
   fprintf(settings, "FIT_TYPE %d\n",              fitType);
   fprintf(settings, "LOSING_WEIGHT_IS_GOOD %d\n", losingWeightIsGood);
   fprintf(settings, "START_WITH_DATA_ENTRY %d\n", startWithDataEntry);
+  /* fprintf(settings, "INTERPOLATE_FIRST_PAIR %d\n",interpolateFirstPair); */
   fprintf(settings, "PLOT_TREND_LINE %d\n",       plotTrendLine);
   fprintf(settings, "PLOT_DATA_POINTS %d\n",      plotDataPoints);
   fprintf(settings, "PLOT_WINDOW %d\n",           plotWindow);
@@ -2882,6 +3053,12 @@ void checkAboutYou(void)
     startWithDataEntry = TRUE;
   else
     startWithDataEntry = FALSE;
+  /*
+  if (GTK_TOGGLE_BUTTON(interpolateFirstPairButton)->active)
+    interpolateFirstPair = TRUE;
+  else
+    interpolateFirstPair = FALSE;
+  */
   if (GTK_TOGGLE_BUTTON(cmButton)->active)
     heightcm = TRUE;
   else
@@ -2926,7 +3103,8 @@ int setFileFormat(int check)
 	iEFieldUse[i] = IE_FIELD_NOT_USED;
     }
     if (check && ((!sawWeight) || (!sawDate))) {
-      hildon_banner_show_information(drawingArea, "ignored", "Your file must have Date and Weight fields - aborting");
+      hildon_banner_show_information(drawingArea,
+				     "ignored", "Your file must have Date and Weight fields - aborting");
       return FALSE;
     }
   }
@@ -3244,9 +3422,11 @@ void iEExportCallback(void)
       if (iEHackerDietFormat) {
 	tJDToDate(ptr->time, &year, &month, &day);
 	if (ptr->comment == NULL)
-	  fprintf(logFile, "%d-%02d-%02d,%4.1f,1,0,\n", year, month, day, ptr->weight);
+	  fprintf(logFile, "%d-%02d-%02d,%4.1f,1,0,\n",
+		  year, month, day, ptr->weight);
 	else
-	  fprintf(logFile, "%d-%02d-%02d,%4.1f,1,0,\"%s\"\n", year, month, day, ptr->weight, ptr->comment);
+	  fprintf(logFile, "%d-%02d-%02d,%4.1f,1,0,\"%s\"\n",
+		  year, month, day, ptr->weight, ptr->comment);
       } else {
 	for (i = 0; i < 4; i++) {
 	  switch (iEFieldUse[i]) {
@@ -3635,7 +3815,8 @@ void plotStartButtonCallback(void)
 	hildon_banner_show_information(drawingArea, "ignored", message);
 	plotStartYear = firstYear; plotStartMonth = firstMonth; plotStartDay = firstDay;
 	ignore = TRUE;
-	hildon_date_button_set_date((HildonDateButton *)plotStartButton, plotStartYear, plotStartMonth-1, plotStartDay);
+	hildon_date_button_set_date((HildonDateButton *)plotStartButton,
+				    plotStartYear, plotStartMonth-1, plotStartDay);
       } else if (calculateJulianDate((int)year, (int)month, (int)day) > (int)lastEntry->time) {
 	int lastDay, lastMonth, lastYear;
 	char message[200];
@@ -3646,7 +3827,8 @@ void plotStartButtonCallback(void)
 	hildon_banner_show_information(drawingArea, "ignored", message);
 	plotStartYear = lastYear; plotStartMonth = lastMonth; plotStartDay = lastDay;
 	ignore = TRUE;
-	hildon_date_button_set_date((HildonDateButton *)plotStartButton, plotStartYear, plotStartMonth-1, plotStartDay);
+	hildon_date_button_set_date((HildonDateButton *)plotStartButton,
+				    plotStartYear, plotStartMonth-1, plotStartDay);
       } else {
 	plotStartYear = (int)year; plotStartMonth = (int)month + 1; plotStartDay = (int)day;
 	dprintf("Got plot start date %d/%d/%d\n", plotStartMonth, plotStartDay, plotStartYear);
@@ -3679,7 +3861,8 @@ void plotEndButtonCallback(void)
 	hildon_banner_show_information(drawingArea, "ignored", message);
 	plotEndYear = firstYear; plotEndMonth = firstMonth; plotEndDay = firstDay;
 	ignore = TRUE;
-	hildon_date_button_set_date((HildonDateButton *)plotEndButton, plotEndYear, plotEndMonth-1, plotEndDay);
+	hildon_date_button_set_date((HildonDateButton *)plotEndButton,
+				    plotEndYear, plotEndMonth-1, plotEndDay);
       } else if (calculateJulianDate((int)year, (int)month, (int)day) > (int)lastEntry->time) {
 	int lastDay, lastMonth, lastYear;
 	char message[200];
@@ -3690,7 +3873,8 @@ void plotEndButtonCallback(void)
 	hildon_banner_show_information(drawingArea, "ignored", message);
 	plotEndYear = lastYear; plotEndMonth = lastMonth; plotEndDay = lastDay;
 	ignore = TRUE;
-	hildon_date_button_set_date((HildonDateButton *)plotEndButton, plotEndYear, plotEndMonth-1, plotEndDay);
+	hildon_date_button_set_date((HildonDateButton *)plotEndButton,
+				    plotEndYear, plotEndMonth-1, plotEndDay);
       } else {
 	plotEndYear = (int)year; plotEndMonth = (int)month + 1; plotEndDay = (int)day;
 	dprintf("Got plot start date %d/%d/%d\n", plotEndMonth, plotEndDay, plotEndYear);
@@ -3927,18 +4111,22 @@ void plotSettingsButtonClicked(GtkButton *button, gpointer userData)
     if ((plotStartYear >= minYear) && (plotStartYear <= maxYear)
 	&& (plotStartMonth > 0)    && (plotStartMonth < 13)
 	&& (plotStartDay > 0)      && (plotStartDay < 32)) {
-      hildon_date_button_set_date((HildonDateButton *)plotStartButton, plotStartYear, plotStartMonth-1, plotStartDay);
+      hildon_date_button_set_date((HildonDateButton *)plotStartButton,
+				  plotStartYear, plotStartMonth-1, plotStartDay);
     } else {
       dprintf("Trying to set plot start to beginning of data\n");
-      hildon_date_button_set_date((HildonDateButton *)plotStartButton, minYear, minMonth-1, minDay);
+      hildon_date_button_set_date((HildonDateButton *)plotStartButton,
+				  minYear, minMonth-1, minDay);
     }
     if ((plotEndYear >= minYear) && (plotEndYear <= maxYear)
 	&& (plotEndMonth > 0)    && (plotEndMonth < 13)
 	&& (plotEndDay > 0)      && (plotEndDay < 32)) {
-      hildon_date_button_set_date((HildonDateButton *)plotEndButton, plotEndYear, plotEndMonth-1, plotEndDay);
+      hildon_date_button_set_date((HildonDateButton *)plotEndButton,
+				  plotEndYear, plotEndMonth-1, plotEndDay);
     } else {
       dprintf("Trying to set plot end to end of data\n");
-      hildon_date_button_set_date((HildonDateButton *)plotEndButton, maxYear, maxMonth-1, maxDay);
+      hildon_date_button_set_date((HildonDateButton *)plotEndButton,
+				  maxYear, maxMonth-1, maxDay);
     }
   }
   hildon_button_set_title((HildonButton *)plotStartButton, NULL);
@@ -4220,7 +4408,8 @@ void aboutYouButtonClicked(GtkButton *button, gpointer userData)
   else
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(setGoalDateButton), FALSE);
   if (logRoot == NULL)
-    goalDateButton = hildon_date_button_new(HILDON_SIZE_AUTO, HILDON_BUTTON_ARRANGEMENT_VERTICAL);
+    goalDateButton = hildon_date_button_new(HILDON_SIZE_AUTO,
+					    HILDON_BUTTON_ARRANGEMENT_VERTICAL);
   else {
     int minYear, maxYear, m, d;
 
@@ -4232,17 +4421,19 @@ void aboutYouButtonClicked(GtkButton *button, gpointer userData)
     if ((targetYear >= 1900) && (targetYear <= 3000)
 	&& (targetMonth > 0)    && (targetMonth < 13)
 	&& (targetDay > 0)      && (targetDay < 32)) {
-      hildon_date_button_set_date((HildonDateButton *)goalDateButton, targetYear, targetMonth-1, targetDay);
+      hildon_date_button_set_date((HildonDateButton *)goalDateButton,
+				  targetYear, targetMonth-1, targetDay);
     } else
-      dprintf("NOT trying to set the date to %d/%d/%d\n", targetMonth, targetDay, targetYear);
+      dprintf("NOT trying to set the date to %d/%d/%d\n",
+	      targetMonth, targetDay, targetYear);
   }
   hildon_button_set_title((HildonButton *)goalDateButton, NULL);
   g_signal_connect(G_OBJECT(goalDateButton), "value-changed",
 		   G_CALLBACK(goalDateButtonCallback), NULL);
   if (haveGoalDate)
-    gtk_widget_set_sensitive(GTK_TOGGLE_BUTTON(goalDateButton), TRUE);
+    gtk_widget_set_sensitive(goalDateButton, TRUE);
   else
-    gtk_widget_set_sensitive(GTK_TOGGLE_BUTTON(goalDateButton), FALSE);
+    gtk_widget_set_sensitive(goalDateButton, FALSE);
 
   gtk_table_attach(GTK_TABLE(aboutYouTable), setGoalDateButton, 4, 6, 4, 5,
 		   GTK_EXPAND | GTK_FILL, GTK_FILL, 0, 0);
@@ -4268,6 +4459,15 @@ void aboutYouButtonClicked(GtkButton *button, gpointer userData)
     gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(sWDEButton), FALSE);
   gtk_table_attach(GTK_TABLE(aboutYouTable), sWDEButton, 4, 7, 6, 7,
 		   GTK_EXPAND | GTK_FILL, GTK_FILL, 0, 0);
+  /*
+  interpolateFirstPairButton = gtk_check_button_new_with_label("Interpolate First Pair");
+  if (interpolateFirstPair)
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(interpolateFirstPairButton), TRUE);
+  else
+    gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(interpolateFirstPairButton), FALSE);
+  gtk_table_attach(GTK_TABLE(aboutYouTable), interpolateFirstPairButton, 8, 11, 6, 7,
+		   GTK_EXPAND | GTK_FILL, GTK_FILL, 0, 0);
+  */
 
   setGoalSensitivities();
   aboutYouStackable = hildon_stackable_window_new();
@@ -4597,10 +4797,45 @@ static gboolean buttonReleaseEvent(GtkWidget *widget, GdkEventButton *event)
     }
     if (found) {
       int day, month, year;
+      logCell *tptr, *ttptr;
 
-      tJDToDate((double)((int)ptr->ptr->time), &year, &month, &day);
-      dprintf("Found it! (%d/%d/%d) (%f)\n", month, day, year, ptr->ptr->weight);
-      createEditPage(ptr->ptr);
+      switch (ptr->data) {
+      case DATA_CELL:
+	tJDToDate((double)((int)ptr->ptr->time), &year, &month, &day);
+	dprintf("Found it! (%d/%d/%d) (%f)\n", month, day, year, ptr->ptr->weight);
+	createEditPage(ptr->ptr);
+	break;
+      case RIGHT_ARROW:
+      case LEFT_ARROW:
+	tptr = logCellRoot;
+	while (tptr != NULL) {
+	  ttptr = tptr;
+	  tptr  = tptr->next;
+	  free(ttptr);
+	}
+	logCellRoot = NULL;
+	logDisplayed = FALSE;
+	if (ptr->data == RIGHT_ARROW) {
+	  printf("Right arrow clicked\n");
+	  logPageOffset++;
+	} else {
+	  printf("Left arrow clicked\n");
+	  logPageOffset--;
+	}
+	gdk_draw_rectangle(pixmap, drawingArea->style->black_gc,
+			   TRUE, 0, 0,
+			   drawingArea->allocation.width,
+			   drawingArea->allocation.height);
+	logCallback(NULL, NULL);
+	gdk_draw_drawable(drawingArea->window,
+			  drawingArea->style->fg_gc[GTK_WIDGET_STATE (drawingArea)],
+			  pixmap,
+			  0,0,0,0,
+			  displayWidth, displayHeight);
+	break;
+      default:
+	fprintf(stderr, "Unknown cell type (%d) found!\n", ptr->data);
+      }
     }
   }
   return(TRUE);
